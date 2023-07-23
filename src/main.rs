@@ -99,19 +99,26 @@ fn main() -> Result<()> {
     let home_dir = dirs::home_dir().ok_or(anyhow!("Home directory not found"))?;
 
     let profile_file = repo.join("profile");
-    if let Commands::SwitchProfile { name } = &cli.command {
-        if !repo.join(name).exists() {
-            return Err(anyhow!("Profile with the given name does not exist."));
-        }
+    match &cli.command {
+        Commands::NewProfile { name } => {
+            std::fs::create_dir(repo.join(name))?;
+            return Ok(());
+        },
+        Commands::SwitchProfile { name } => {
+            if !repo.join(name).exists() {
+                return Err(anyhow!("Profile with the given name does not exist."));
+            }
 
-        let old_profile = fs::read_to_string(&profile_file)?;
-        unlink_all_entries(&home_dir, &repo, &old_profile)?;
+            let old_profile = fs::read_to_string(&profile_file)?;
+            unlink_all_entries(&home_dir, &repo, &old_profile)?;
 
-        if profile_file.exists() {
-            fs::remove_file(&profile_file)?;
-        }
-        fs::write(&profile_file, name)?;
-    };
+            if profile_file.exists() {
+                fs::remove_file(&profile_file)?;
+            }
+            fs::write(&profile_file, name)?;
+        },
+        _ => (),
+    }
 
     let current_profile = match fs::read_to_string(&profile_file) {
         Ok(s) => s,
@@ -122,9 +129,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::ConfigInit => todo!(),
-        Commands::NewProfile { name } => {
-            std::fs::create_dir(repo.join(name))?;
-        }
+        Commands::NewProfile { .. } => unreachable!(),
         Commands::Add { src } => {
             let src = PathBuf::from(shellexpand::tilde(&src).into_owned()).canonicalize()?;
 
