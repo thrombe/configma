@@ -283,17 +283,25 @@ fn main() -> Result<()> {
                     }
 
                     let dest = e.path();
+
+                    // if the symlink is created by configma, the canonical paths should be same
+                    if src.canonicalize()? == dest {
+                        continue;
+                    }
+
                     println!(
-                        "creating symlink\n src: {}\ndst: {}\n",
+                        "creating symlink\nsrc: {}\ndst: {}",
                         &src.to_string_lossy(),
                         &dest.to_string_lossy()
                     );
 
-                    println!("found a file at {}\n", &src.to_string_lossy());
+                    println!("found a file at {}", &src.to_string_lossy());
                     if force && src.exists() {
                         println!("deleting {}", &src.to_string_lossy());
                         fs::remove_file(&src)?;
                     }
+                    println!();
+
                     // Create a symlink to the original location
                     #[cfg(unix)]
                     std::os::unix::fs::symlink(dest, &src)?;
