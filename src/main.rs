@@ -98,7 +98,7 @@ fn main() -> Result<()> {
 
     let home_dir = dirs::home_dir().ok_or(anyhow!("Home directory not found"))?;
 
-    let profile_file = repo.join("profile");
+    let profile_file = config_dir.join("profile");
     match &cli.command {
         Commands::NewProfile { name } => {
             std::fs::create_dir(repo.join(name))?;
@@ -109,10 +109,10 @@ fn main() -> Result<()> {
                 return Err(anyhow!("Profile with the given name does not exist."));
             }
 
-            let old_profile = fs::read_to_string(&profile_file)?;
-            unlink_all_entries(&home_dir, &repo, &old_profile)?;
-
             if profile_file.exists() {
+                let old_profile = fs::read_to_string(&profile_file)?;
+                unlink_all_entries(&home_dir, &repo, &old_profile)?;
+
                 fs::remove_file(&profile_file)?;
             }
             fs::write(&profile_file, name)?;
