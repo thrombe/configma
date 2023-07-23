@@ -52,7 +52,6 @@ enum Commands {
     /// Switch to a different profile
     SwitchProfile {
         name: String,
-        // TODO: instead of overwriting files, place them in bkp directory in .config or in repo
         /// overwrite files
         #[arg(long, short, default_value_t = false)]
         force: bool,
@@ -121,6 +120,13 @@ fn main() -> Result<()> {
     let repo = PathBuf::from(repo);
     // dbg!(&repo);
 
+    let dump_dir = config_dir.join("dumps").join(format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+    ));
+
     let home_dir = dirs::home_dir().ok_or(anyhow!("Home directory not found"))?;
 
     let profile_file = config_dir.join("profile");
@@ -180,7 +186,7 @@ fn main() -> Result<()> {
 
             // Move the source file/directory to the profile directory
             println!(
-                "moving file\nsrc: {}\ndst: {}\n",
+                "moving file\n  src: {}\n  dst: {}\n",
                 &src.to_string_lossy(),
                 &dest.to_string_lossy()
             );
@@ -215,7 +221,7 @@ fn main() -> Result<()> {
             let dest = repo.join(current_profile).join(relative_src);
 
             println!(
-                "restoring file\nsrc: {}\ndst: {}\n",
+                "restoring file\n  src: {}\n  dst: {}\n",
                 &src.to_string_lossy(),
                 &dest.to_string_lossy()
             );
@@ -290,14 +296,25 @@ fn main() -> Result<()> {
                     }
 
                     println!(
-                        "creating symlink\nsrc: {}\ndst: {}",
+                        "creating symlink\n  src: {}\n  dst: {}",
                         &src.to_string_lossy(),
                         &dest.to_string_lossy()
                     );
 
-                    println!("found a file at {}", &src.to_string_lossy());
                     if force && src.exists() {
-                        println!("deleting {}", &src.to_string_lossy());
+                        let dump_to = dump_dir.join(rel_path);
+
+                        if !dump_dir.exists() {
+                            fs::create_dir_all(dump_to.parent().unwrap())?;
+                        }
+
+                        println!(
+                            "moving file to dump\n  src: {}\n  dump: {}",
+                            &src.to_string_lossy(),
+                            &dump_to.to_string_lossy()
+                        );
+
+                        let _ = fs::copy(&src, dump_to)?;
                         fs::remove_file(&src)?;
                     }
                     println!();
