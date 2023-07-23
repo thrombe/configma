@@ -149,6 +149,7 @@ fn main() -> Result<()> {
             // dbg!(&dest, &src ,&home_dir);
 
             // Move the source file/directory to the profile directory
+            println!("moving file\nsrc: {}\ndst: {}\n", &src.to_string_lossy(), &dest.to_string_lossy());
             let _ = fs::copy(&src, &dest);
             fs::remove_file(&src)?;
 
@@ -179,6 +180,7 @@ fn main() -> Result<()> {
 
             let dest = repo.join(current_profile).join(relative_src);
 
+            println!("restoring file\nsrc: {}\ndst: {}\n", &src.to_string_lossy(), &dest.to_string_lossy());
             // Remove the symlink
             fs::remove_file(&src)?;
 
@@ -213,6 +215,7 @@ fn main() -> Result<()> {
 
                 // dbg!(&src, &dest);
                 if dest == src.canonicalize()? && src.is_symlink() {
+                    println!("deleting symlink: {}\n", &src.to_string_lossy());
                     fs::remove_file(&src)?;
                 } else {
                     return err;
@@ -242,6 +245,7 @@ fn main() -> Result<()> {
                     }
 
                     let dest = e.path();
+                    println!("creating symlink\n src: {}\ndst: {}\n", &src.to_string_lossy(), &dest.to_string_lossy());
                     // Create a symlink to the original location
                     #[cfg(unix)]
                     std::os::unix::fs::symlink(dest, &src)?;
@@ -276,6 +280,7 @@ fn unlink_all_entries(
         if !src.is_symlink() || src.canonicalize()? != e.path() {
             return Err(anyhow!(format!("bad Entry: {:?}.", &src)));
         }
+        println!("deleting symlink: {}\n", &src.to_string_lossy());
         fs::remove_file(&src)?;
     }
     Ok(())
