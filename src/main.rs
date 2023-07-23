@@ -50,7 +50,13 @@ enum Commands {
     NewProfile { name: String },
 
     /// Switch to a different profile
-    SwitchProfile { name: String },
+    SwitchProfile {
+        name: String,
+        // TODO: instead of overwriting files, place them in bkp directory in .config or in repo
+        /// overwrite files
+        #[arg(long, short, default_value_t = false)]
+        force: bool,
+    },
 
     /// Unlink files from the current profile
     Unlink {
@@ -59,7 +65,11 @@ enum Commands {
     },
 
     /// Check and apply the config (if edited)
-    Sync,
+    Sync {
+        /// overwrite files
+        #[arg(long, short, default_value_t = false)]
+        force: bool,
+    },
 }
 
 #[derive(Deserialize, Debug)]
@@ -119,14 +129,14 @@ fn main() -> Result<()> {
             std::fs::create_dir(repo.join(name))?;
             return Ok(());
         }
-        Commands::SwitchProfile { name } => {
+        Commands::SwitchProfile { name, force } => {
             if !repo.join(name).exists() {
                 return Err(anyhow!("Profile with the given name does not exist."));
             }
 
             if profile_file.exists() {
                 let old_profile = fs::read_to_string(&profile_file)?;
-                unlink_all_entries(&home_dir, &repo, &old_profile)?;
+                unlink_all_entries(&home_dir, &repo, &old_profile, *force)?;
 
                 fs::remove_file(&profile_file)?;
             }
@@ -218,7 +228,7 @@ fn main() -> Result<()> {
         }
         Commands::Unlink { arg } => match arg {
             Unlink::All => {
-                unlink_all_entries(&home_dir, &repo, &current_profile)?;
+                unlink_all_entries(&home_dir, &repo, &current_profile, false)?;
             }
             Unlink::Entry { src } => {
                 let filename = PathBuf::from(shellexpand::tilde(&src).into_owned());
@@ -250,7 +260,7 @@ fn main() -> Result<()> {
                 }
             }
         },
-        Commands::Sync | Commands::SwitchProfile { .. } => {
+        Commands::Sync { force } | Commands::SwitchProfile { force, .. } => {
             let current_profile_dir = Path::new(&repo).join(current_profile).canonicalize()?;
             let walker = WalkDir::new(&current_profile_dir);
             for e in walker.into_iter() {
@@ -260,7 +270,7 @@ fn main() -> Result<()> {
                 }
                 let rel_path = e.path().strip_prefix(&current_profile_dir)?;
                 let src = home_dir.join(rel_path);
-                if src.exists() {
+                if src.exists() && !force {
                     if src.canonicalize()? == e.path() {
                         continue;
                     } else {
@@ -278,6 +288,12 @@ fn main() -> Result<()> {
                         &src.to_string_lossy(),
                         &dest.to_string_lossy()
                     );
+
+                    println!("found a file at {}\n", &src.to_string_lossy());
+                    if force && src.exists() {
+                        println!("deleting {}", &src.to_string_lossy());
+                        fs::remove_file(&src)?;
+                    }
                     // Create a symlink to the original location
                     #[cfg(unix)]
                     std::os::unix::fs::symlink(dest, &src)?;
@@ -295,6 +311,7 @@ fn unlink_all_entries(
     home_dir: impl AsRef<Path>,
     repo: impl AsRef<Path>,
     profile: impl AsRef<str>,
+    ignore_non_links: bool,
 ) -> Result<()> {
     // Remove symlinks for all files in the profile
     let home_dir = home_dir.as_ref();
@@ -310,7 +327,11 @@ fn unlink_all_entries(
         let rel_path = e.path().strip_prefix(&current_profile_dir)?;
         let src = home_dir.join(rel_path);
         if !src.is_symlink() || src.canonicalize()? != e.path() {
-            return Err(anyhow!(format!("bad Entry: {:?}.", &src)));
+            if ignore_non_links {
+                continue;
+            } else {
+                return Err(anyhow!(format!("bad Entry: {:?}.", &src)));
+            }
         }
         println!("deleting symlink: {}\n", &src.to_string_lossy());
         fs::remove_file(&src)?;
