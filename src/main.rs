@@ -11,9 +11,9 @@ use walkdir::WalkDir;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// Specify a custom config file
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
+    /// Specify a custom config directory
+    #[arg(short, long)]
+    config_dir: Option<String>,
 
     /// Turn debugging information on
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -41,6 +41,8 @@ enum Commands {
     /// Add a file to the current profile
     Add { src: String },
 
+    // TODO: allow specifying paths from both the current profile and the src locations
+    // TODO: check if the dir parent is empty, and remove it
     /// Remove a file from the current profile
     Remove { src: String },
 
@@ -78,16 +80,29 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     // dbg!(&cli);
 
-    let config_dir = dirs::config_dir()
-        .context("Could not find config dir.")?
-        .join("configma");
+    let config_dir = {
+        let config_dir = dirs::config_dir()
+            .context("Could not find config dir.")?
+            .join("configma");
+
+        if cli.config_dir.is_none() && !config_dir.exists() {
+            fs::create_dir(&config_dir)?;
+        }
+
+        cli.config_dir
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or(config_dir)
+    };
     let conf: Config = {
-        let config_file_path = cli.config.unwrap_or(config_dir.join("config.toml"));
+        let config_file_path = config_dir.join("config.toml");
         if config_file_path.exists() {
             let contents = std::fs::read_to_string(config_file_path)?;
             toml::from_str(&contents)?
         } else {
-            return Err(anyhow!("Create a git repo and add the path to it in ~/.config/configma/config.toml."));
+            return Err(anyhow!(
+                "Create a git repo and add the path to it in ~/.config/configma/config.toml."
+            ));
         }
     };
 
@@ -103,7 +118,7 @@ fn main() -> Result<()> {
         Commands::NewProfile { name } => {
             std::fs::create_dir(repo.join(name))?;
             return Ok(());
-        },
+        }
         Commands::SwitchProfile { name } => {
             if !repo.join(name).exists() {
                 return Err(anyhow!("Profile with the given name does not exist."));
@@ -116,7 +131,7 @@ fn main() -> Result<()> {
                 fs::remove_file(&profile_file)?;
             }
             fs::write(&profile_file, name)?;
-        },
+        }
         _ => (),
     }
 
@@ -154,7 +169,11 @@ fn main() -> Result<()> {
             // dbg!(&dest, &src ,&home_dir);
 
             // Move the source file/directory to the profile directory
-            println!("moving file\nsrc: {}\ndst: {}\n", &src.to_string_lossy(), &dest.to_string_lossy());
+            println!(
+                "moving file\nsrc: {}\ndst: {}\n",
+                &src.to_string_lossy(),
+                &dest.to_string_lossy()
+            );
             let _ = fs::copy(&src, &dest);
             fs::remove_file(&src)?;
 
@@ -185,7 +204,11 @@ fn main() -> Result<()> {
 
             let dest = repo.join(current_profile).join(relative_src);
 
-            println!("restoring file\nsrc: {}\ndst: {}\n", &src.to_string_lossy(), &dest.to_string_lossy());
+            println!(
+                "restoring file\nsrc: {}\ndst: {}\n",
+                &src.to_string_lossy(),
+                &dest.to_string_lossy()
+            );
             // Remove the symlink
             fs::remove_file(&src)?;
 
@@ -250,7 +273,11 @@ fn main() -> Result<()> {
                     }
 
                     let dest = e.path();
-                    println!("creating symlink\n src: {}\ndst: {}\n", &src.to_string_lossy(), &dest.to_string_lossy());
+                    println!(
+                        "creating symlink\n src: {}\ndst: {}\n",
+                        &src.to_string_lossy(),
+                        &dest.to_string_lossy()
+                    );
                     // Create a symlink to the original location
                     #[cfg(unix)]
                     std::os::unix::fs::symlink(dest, &src)?;
