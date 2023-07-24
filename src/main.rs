@@ -170,6 +170,11 @@ fn main() -> Result<()> {
             for src in src.into_iter() {
                 let src = PathBuf::from(shellexpand::tilde(&src).into_owned()).canonicalize()?;
 
+                if src.starts_with(&repo) {
+                    println!("the file {} is already in the repo.", &src.to_string_lossy());
+                    continue;
+                }
+
                 // Validate that the source path is within the home directory
                 if !src.starts_with(home_dir.canonicalize()?) {
                     return Err(anyhow!(
