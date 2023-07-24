@@ -23,44 +23,48 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Subcommand, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Unlink {
-    /// Unlink all files from the current profile
-    All,
-
-    /// Unlink a specific file from the current profile
-    Entry { src: String },
-}
-
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Initialize the config file
-    ConfigInit,
-
-    // TODO: Vec<String>
     /// Add a file to the current profile
-    Add { src: String },
+    Add {
+        #[clap(required = true)]
+        src: Vec<String>,
+    },
 
     // TODO: allow specifying paths from both the current profile and the src locations
-    // TODO: check if the dir parent is empty, and remove it
+    // TODO: check if the parent dir is empty, and remove it
     /// Remove a file from the current profile
-    Remove { src: String },
+    Remove {
+        #[clap(required = true)]
+        src: Vec<String>,
+    },
 
     /// Create a new profile
-    NewProfile { name: String },
+    NewProfile {
+        /// Name of the new profile
+        name: String,
+    },
 
     /// Switch to a different profile
     SwitchProfile {
         name: String,
+
         /// overwrite files
         #[arg(long, short, default_value_t = false)]
         force: bool,
     },
 
     /// Unlink files from the current profile
+    #[clap(group = clap::ArgGroup::new("target").required(true))]
     Unlink {
-        #[clap(subcommand)]
-        arg: Unlink,
+        /// Unlink all files from the current profile
+        #[clap(group = "target")]
+        #[arg(long, short, default_value_t = false)]
+        all: bool,
+
+        /// Unlink a specific file from the current profile
+        #[clap(group = "target")]
+        src: Option<String>,
     },
 
     /// Check and apply the config (if edited)
@@ -73,7 +77,7 @@ enum Commands {
 
 #[derive(Deserialize, Debug)]
 struct Config {
-    repo: Option<String>,
+    repo: String,
 }
 
 // TODO:
@@ -100,8 +104,11 @@ fn main() -> Result<()> {
 
         cli.config_dir
             .as_ref()
+            .map(shellexpand::tilde)
+            .map(|s| s.to_string())
             .map(PathBuf::from)
-            .unwrap_or(config_dir)
+            .map(|p| p.canonicalize())
+            .unwrap_or(Ok(config_dir))?
     };
     let conf: Config = {
         let config_file_path = config_dir.join("config.toml");
@@ -115,8 +122,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let repo = conf.repo.unwrap_or("~/.configma".into());
-    let repo = shellexpand::tilde(&repo).into_owned();
+    let repo = shellexpand::tilde(&conf.repo).into_owned();
     let repo = PathBuf::from(repo);
     // dbg!(&repo);
 
@@ -159,84 +165,84 @@ fn main() -> Result<()> {
     };
 
     match cli.command {
-        Commands::ConfigInit => todo!(),
         Commands::NewProfile { .. } => unreachable!(),
         Commands::Add { src } => {
-            let src = PathBuf::from(shellexpand::tilde(&src).into_owned()).canonicalize()?;
+            for src in src.into_iter() {
+                let src = PathBuf::from(shellexpand::tilde(&src).into_owned()).canonicalize()?;
 
-            // Validate that the source path is within the home directory
-            if !src.starts_with(home_dir.canonicalize()?) {
-                return Err(anyhow!(
-                    "Adding files outside of HOME directory is not allowed."
-                ));
+                // Validate that the source path is within the home directory
+                if !src.starts_with(home_dir.canonicalize()?) {
+                    return Err(anyhow!(
+                        "Adding files outside of HOME directory is not allowed."
+                    ));
+                }
+                let relative_src = src.strip_prefix(home_dir.canonicalize()?)?;
+                let src = home_dir.join(relative_src);
+
+                let dest = PathBuf::from(&repo)
+                    .join(&current_profile)
+                    .join(relative_src);
+
+                // Create the necessary parent directories if they don't exist
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+
+                // dbg!(&dest, &src ,&home_dir);
+
+                // Move the source file/directory to the profile directory
+                println!(
+                    "moving file\n  src: {}\n  dst: {}\n",
+                    &src.to_string_lossy(),
+                    &dest.to_string_lossy()
+                );
+                let _ = fs::copy(&src, &dest);
+                fs::remove_file(&src)?;
+
+                // Create a symlink to the original location
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&dest, &src)?;
+                #[cfg(windows)]
+                std::os::windows::fs::symlink_file(&dest, &src)?;
             }
-            let relative_src = src.strip_prefix(home_dir.canonicalize()?)?;
-            let src = home_dir.join(relative_src);
-
-            let dest = PathBuf::from(&repo)
-                .join(current_profile)
-                .join(relative_src);
-
-            // Create the necessary parent directories if they don't exist
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            // dbg!(&dest, &src ,&home_dir);
-
-            // Move the source file/directory to the profile directory
-            println!(
-                "moving file\n  src: {}\n  dst: {}\n",
-                &src.to_string_lossy(),
-                &dest.to_string_lossy()
-            );
-            let _ = fs::copy(&src, &dest);
-            fs::remove_file(&src)?;
-
-            // Create a symlink to the original location
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&dest, &src)?;
-            #[cfg(windows)]
-            std::os::windows::fs::symlink_file(&dest, &src)?;
         }
         Commands::Remove { src } => {
-            let filename = PathBuf::from(shellexpand::tilde(&src).into_owned());
-            let src = filename
-                .parent()
-                .unwrap()
-                .canonicalize()?
-                .join(filename.file_name().unwrap());
+            for src in src.into_iter() {
+                let filename = PathBuf::from(shellexpand::tilde(&src).into_owned());
+                let src = filename
+                    .parent()
+                    .unwrap()
+                    .canonicalize()?
+                    .join(filename.file_name().unwrap());
 
-            // dbg!(&src, home_dir.canonicalize());
+                // dbg!(&src, home_dir.canonicalize());
 
-            // Validate that the source path is within the home directory
-            if !src.starts_with(home_dir.canonicalize()?) {
-                return Err(anyhow!(
-                    "Removing files outside of HOME directory is not allowed."
-                ));
+                // Validate that the source path is within the home directory
+                if !src.starts_with(home_dir.canonicalize()?) {
+                    return Err(anyhow!(
+                        "Removing files outside of HOME directory is not allowed."
+                    ));
+                }
+                let relative_src = src.strip_prefix(home_dir.canonicalize()?)?;
+                let src = home_dir.join(relative_src);
+
+                let dest = repo.join(&current_profile).join(relative_src);
+
+                println!(
+                    "restoring file\n  src: {}\n  dst: {}\n",
+                    &src.to_string_lossy(),
+                    &dest.to_string_lossy()
+                );
+                // Remove the symlink
+                fs::remove_file(&src)?;
+
+                // Move the file/directory back to the original location
+                let _ = fs::copy(&dest, &src)?;
+                fs::remove_file(&dest)?;
             }
-            let relative_src = src.strip_prefix(home_dir.canonicalize()?)?;
-            let src = home_dir.join(relative_src);
-
-            let dest = repo.join(current_profile).join(relative_src);
-
-            println!(
-                "restoring file\n  src: {}\n  dst: {}\n",
-                &src.to_string_lossy(),
-                &dest.to_string_lossy()
-            );
-            // Remove the symlink
-            fs::remove_file(&src)?;
-
-            // Move the file/directory back to the original location
-            let _ = fs::copy(&dest, &src)?;
-            fs::remove_file(&dest)?;
         }
-        Commands::Unlink { arg } => match arg {
-            Unlink::All => {
-                unlink_all_entries(&home_dir, &repo, &current_profile, false)?;
-            }
-            Unlink::Entry { src } => {
+        Commands::Unlink { all, src } => {
+            if let Some(src) = src {
                 let filename = PathBuf::from(shellexpand::tilde(&src).into_owned());
                 let src = filename
                     .parent()
@@ -264,8 +270,12 @@ fn main() -> Result<()> {
                 } else {
                     return err;
                 }
+            } else if all {
+                unlink_all_entries(&home_dir, &repo, &current_profile, false)?;
+            } else {
+                unreachable!();
             }
-        },
+        }
         Commands::Sync { force } | Commands::SwitchProfile { force, .. } => {
             let current_profile_dir = Path::new(&repo).join(current_profile).canonicalize()?;
             let walker = WalkDir::new(&current_profile_dir);
