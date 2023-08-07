@@ -1,42 +1,60 @@
 # Configma
-a very simple config files manager.
+Configma is a powerful yet incredibly simple and efficient config files manager. Main focus is on simplicity, reliability, and ease of use.
 
-# Working
-very simple.
-very small codebase.
-uses with git repository for convinience.
-`configma add <file / dir>` moves the file / dir into the repo directory mentioned in the config file for configma.
-there is no separate database for configma. it uses the files and directories in the repo to symlink the files / dirs at the correct place.
-directories contain a stub file that helps configma know that the directory must be symlinked.
-configma supports multiple profiles. you can switch between profiles really easily (`configma switch-profile <profile name>`).
-you can use -f flag to force sync / apply a config profile. it moves the current configs in a temp directory so that it is not lost is any accidents happen.
-you can remove files from configma really easily. `configma remove <path>` path can be a path to the file in your configs or a path in the repo. configma handles it correctly. this command restores the files / dirs from the repo to the correct place in your system.
+# Features
+- User-Friendly and Minimalistic: Configma is built with simplicity in mind. Its minimalistic design makes it easy to use, even for beginners.
+- Easy Git Integration: Configma can be easily used with git for even more convinience.
+- Small codebase: there is very little code in this project. Managing config files in a very complex way seems like an overkill. But manually managing them is a pain. So configma provides a nice middleground.
+- Configma add: Adding files or directories to Configma is a breeze with `configma add <file / dir>`, which moves the specified file or directory into the repository directory mentioned in the Configma config file. The tool doesn't rely on a separate database; instead, it cleverly uses the files and directories in the repository to symlink them at the correct locations.
+- Directory stub files: Configma uses a 'configma_dir.stub' file placed within symlinked directories to differentiate directories added to Configma from individual files. Using this approach, Configma avoids the need for a separate database, maintaining its lightweight design. 
+- Configma remove: Removing files from Configma is just as straightforward with `configma remove <path>`. Whether the path points to a file within your configs or the repository, Configma handles it correctly. This command restores the files/directories from the repository to their original places in your system, making management effortless.
+- Profiles: Profiles enable users to consolidate config files from various systems into a single repository. The currently applied profile name is stored in the '~/.config/configma/profile' file, allowing users to seamlessly switch between profiles on each system using the `configma switch-profile <name>` command.
+- Force sync: Worried about data loss? The -f flag enables you to force sync or apply a config profile, moving your current configs to a temporary directory to safeguard against accidents.
 
 
 # how to use
-`git clone <this repo>`
-`cd configma`
-`cargo install --path .`
+## Installation
+Clone this repository, navigate to the Configma directory and Install Configma using Cargo.
+```zsh
+git clone https://github.com/thrombe/configma
+cd configma
+cargo install --path .
+````
 
-## create a new profile
-`mkdir -p ~/.config/configma`
-`echo 'repo = <some path that you want configma to store your config files in>' > ~/.config/configma/config.toml`
-`configma new-profile <profile name>`
+## Create a new profile
+Set up a new profile by creating the Configma configuration file.
+```zsh
+mkdir -p ~/.config/configma
+echo 'repo = <path>' > ~/.config/configma/config.toml
+configma new-profile <profile name>
+configma switch-profile <profile name>
+```
+the repo path is any directory where you would like configma to store your config files in.
 
-## switch to the profile
-`configma switch-profile <profile name>`
+## Switch Profiles
+```zsh
+configma switch-profile <profile name>
+````
 
-## add file / dir to configma
-`configma add <path>`
+## Add files / directories to current profile
+```zsh
+configma add <path>
+```
 
-## remove / restore a file from configma
-`configma remove <path>`
+## Remove / Restore a file from current profile
+Whether the path points to a file within your configs or the repository, Configma handles it correctly. This command restores the files/directories from the repository to their original places in your system.
+```zsh
+configma remove <path>
+```
 
-## sync changes from repo to the system
-`configma sync`
+## Sync changes
+Sync any changes made in the repo to the system.
+```zsh
+configma sync
+```
 
-## todo
-- some kinds template / inheritance system to have profiles inherit from other profiles
-- git integration?
+# todo
+-[ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
+-[ ] Git integration
 
 
