@@ -54,7 +54,7 @@ configma sync
 ```
 
 # todo
--[ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
--[ ] Git integration
+- [ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
+- [ ] Git integration
 
 
