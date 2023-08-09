@@ -247,8 +247,14 @@ impl Resolver {
         let filename = PathBuf::from(shellexpand::tilde(path.as_ref()).into_owned());
         let src = filename
             .parent()
-            .unwrap()
-            .canonicalize()?
+            .map(|p| {
+                if p.to_string_lossy().is_empty() {
+                    PathBuf::from("./").canonicalize()
+                } else {
+                    p.canonicalize()
+                }
+            })
+            .unwrap()?
             .join(filename.file_name().unwrap());
         Ok(src)
     }
