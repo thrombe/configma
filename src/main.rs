@@ -497,6 +497,17 @@ fn main() -> Result<()> {
                             &src
                         ));
                     }
+
+                    // remove empty parent dirs
+                    let mut parent = e.relative.clone();
+                    while parent.pop() && !parent.to_string_lossy().is_empty() {
+                        let p = rsv.profile_dir.join(&parent);
+                        if p.read_dir()?.count() == 0 {
+                            fs::remove_dir(p)?;
+                        } else {
+                            break;
+                        }
+                    }
                 } else {
                     return Err(anyhow!("file {} not maintained by configma", &src));
                 }
