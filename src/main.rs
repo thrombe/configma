@@ -32,7 +32,6 @@ enum Command {
         src: Vec<String>,
     },
 
-    // TODO: allow specifying paths from both the current profile and the src locations
     // TODO: check if the parent dir is empty, and remove it
     /// Remove paths from the current profile
     Remove {
