@@ -364,7 +364,9 @@ impl Resolver {
                 fs_extra::dir::copy(
                     &e.src,
                     &dump_to,
-                    &fs_extra::dir::CopyOptions::new().copy_inside(true),
+                    &fs_extra::dir::CopyOptions::new()
+                        .copy_inside(false)
+                        .content_only(true),
                 )?;
                 fs::remove_dir_all(&e.src)?;
             } else {
@@ -475,7 +477,9 @@ fn main() -> Result<()> {
                         fs_extra::dir::copy(
                             &e.dest,
                             &e.src,
-                            &fs_extra::dir::CopyOptions::new().copy_inside(true),
+                            &fs_extra::dir::CopyOptions::new()
+                                .copy_inside(false)
+                                .content_only(true),
                         )?;
                         fs::remove_dir_all(&e.dest)?;
                     } else if e.dest.is_file() {
@@ -540,7 +544,9 @@ fn main() -> Result<()> {
                     fs_extra::dir::copy(
                         &e.src,
                         &e.dest,
-                        &fs_extra::dir::CopyOptions::new().copy_inside(true),
+                        &fs_extra::dir::CopyOptions::new()
+                            .copy_inside(false)
+                            .content_only(true),
                     )?;
                     fs::remove_dir_all(&e.src)?;
                     let _ = fs::File::create(e.dest.join(DIR_STUB))?;
