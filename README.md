@@ -71,6 +71,5 @@ configma sync
 # todo
 - [ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
 - [ ] Git integration
-- [ ] Somehow handle paths outside HOME
 - [ ] Add a set-repo subcommand (with -f) that sets the repo path in configma/config.toml 
 

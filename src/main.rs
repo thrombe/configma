@@ -7,7 +7,9 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
+use nix::unistd;
 use serde::Deserialize;
+use users::{os::unix::UserExt, User};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -81,12 +83,13 @@ struct Config {
 }
 
 const DIR_STUB: &str = "configma_dir.stub";
+const HOME: &str = "home";
 
-fn generate_entry_set(profile: impl AsRef<Path>) -> Result<HashSet<PathBuf>> {
+fn generate_entry_set(parent_dir: impl AsRef<Path>) -> Result<HashSet<PathBuf>> {
     let mut set = HashSet::new();
 
     let mut dir_buff = Vec::new();
-    let mut dir_buff_iter = vec![profile.as_ref().to_path_buf()];
+    let mut dir_buff_iter = vec![parent_dir.as_ref().to_path_buf()];
 
     while !dir_buff_iter.is_empty() {
         for dir in dir_buff_iter.iter() {
@@ -94,7 +97,7 @@ fn generate_entry_set(profile: impl AsRef<Path>) -> Result<HashSet<PathBuf>> {
                 let e = e?;
                 let ft = e.file_type()?;
                 let p = e.path();
-                let rel_path = p.strip_prefix(&profile)?.to_path_buf();
+                let rel_path = p.strip_prefix(&parent_dir)?.to_path_buf();
 
                 if ft.is_file() {
                     set.insert(rel_path);
@@ -124,6 +127,9 @@ fn generate_entry_set(profile: impl AsRef<Path>) -> Result<HashSet<PathBuf>> {
 
 #[derive(Debug)]
 struct Ctx {
+    non_root_user: User,
+    root_user: Option<User>,
+
     _home_dir: PathBuf,
     canon_home_dir: PathBuf,
 
@@ -137,11 +143,10 @@ struct Ctx {
 }
 
 impl Ctx {
-    fn new(cli: &Cli) -> Result<Self> {
+    fn new(cli: &Cli, root_user: Option<User>, non_root_user: User) -> Result<Self> {
+        let home_dir = non_root_user.home_dir();
         let config_dir = {
-            let config_dir = dirs::config_dir()
-                .context("Could not find config dir.")?
-                .join("configma");
+            let config_dir = home_dir.join(".config/configma");
 
             if cli.config_dir.is_none() && !config_dir.exists() {
                 fs::create_dir(&config_dir)?;
@@ -149,7 +154,7 @@ impl Ctx {
 
             cli.config_dir
                 .as_ref()
-                .map(shellexpand::tilde)
+                .map(|p| shellexpand::tilde_with_context(p, || Some(home_dir.to_string_lossy())))
                 .map(|s| s.to_string())
                 .map(PathBuf::from)
                 .map(|p| p.canonicalize())
@@ -169,7 +174,9 @@ impl Ctx {
         };
 
         let repo = {
-            let r = shellexpand::tilde(&conf.repo).into_owned();
+            let r =
+                shellexpand::tilde_with_context(&conf.repo, || Some(home_dir.to_string_lossy()))
+                    .into_owned();
             PathBuf::from(r)
         };
 
@@ -180,7 +187,7 @@ impl Ctx {
                 .as_millis()
         ));
 
-        let home_dir = dirs::home_dir().ok_or(anyhow!("Home directory not found"))?;
+        let home_dir = non_root_user.home_dir().to_path_buf();
 
         let profile_file = config_dir.join("profile");
 
@@ -193,6 +200,8 @@ impl Ctx {
             profile_file,
             canon_repo: repo.canonicalize()?,
             repo,
+            root_user,
+            non_root_user,
         };
         Ok(s)
     }
@@ -203,21 +212,171 @@ impl Ctx {
             self.canon_repo.join(current_profile)
         };
 
-        let entries = generate_entry_set(&profile_dir)?;
+        let profile_home = profile_dir.join(HOME);
+        if !profile_home.exists() {
+            fs::create_dir(&profile_home)?;
+        }
+        let home_entries = generate_entry_set(profile_home)?;
+
+        let mut entries = HashSet::new();
+        for dir in fs::read_dir(&profile_dir)? {
+            let dir = dir?;
+            let path = dir.path();
+
+            // None only if path ends in '..'
+            if path.file_name().unwrap() == HOME {
+                continue;
+            }
+
+            if path.is_file() {
+                entries.insert(path.strip_prefix(&profile_dir)?.to_path_buf());
+            } else if path.is_dir() {
+                let dir_entries = generate_entry_set(&path)?;
+                entries.extend(
+                    dir_entries
+                        .into_iter()
+                        .map(|p| PathBuf::from(path.file_name().unwrap()).join(p)),
+                );
+            } else {
+                println!("ignoring unhandlable path: {:?}", &path);
+            }
+        }
 
         Ok(Resolver {
             ctx: self,
             profile_dir,
-            entries,
+            home_entries,
+            non_home_entries: entries,
         })
+    }
+
+    fn escalate_privileges(&self) -> Result<Privilege<'_>> {
+        let Some(root) = &self.root_user else {
+            return Err(anyhow!("No root privileges"));
+        };
+
+        unistd::setegid(unistd::Gid::from_raw(root.primary_group_id()))?;
+        unistd::seteuid(unistd::Uid::from_raw(root.uid()))?;
+
+        Ok(Privilege { ctx: self })
+    }
+}
+
+#[derive(Debug)]
+struct Privilege<'a> {
+    ctx: &'a Ctx,
+}
+impl<'a> Drop for Privilege<'a> {
+    fn drop(&mut self) {
+        unistd::setegid(unistd::Gid::from_raw(
+            self.ctx.non_root_user.primary_group_id(),
+        ))
+        .expect("could not drop privileges");
+
+        unistd::seteuid(unistd::Uid::from_raw(self.ctx.non_root_user.uid()))
+            .expect("could not drop privileges");
+    }
+}
+
+#[derive(Debug, Clone)]
+enum RelativePath {
+    Home(PathBuf),
+    NonHome(PathBuf),
+}
+
+impl RelativePath {
+    fn relative(self) -> PathBuf {
+        match self {
+            RelativePath::Home(p) => PathBuf::from(HOME).join(p),
+            RelativePath::NonHome(p) => p,
+        }
     }
 }
 
 #[derive(Debug)]
 struct Entry {
     src: PathBuf,
-    relative: PathBuf,
+    relative: RelativePath,
     dest: PathBuf,
+}
+
+impl Entry {
+    fn get_priv<'a>(&self, ctx: &'a Ctx) -> Result<Option<Privilege<'a>>> {
+        match &self.relative {
+            RelativePath::Home(_) => Ok(None),
+            RelativePath::NonHome(_) => {
+                // let pri = ctx.escalate_privileges();
+                // if the parent of the file/dir is root - then escilate privileges
+                if self
+                    .src
+                    .ancestors()
+                    .find(|p| p.exists())
+                    .map(nix::sys::stat::stat)
+                    .transpose()?
+                    .map(|s| s.st_uid)
+                    .map(unistd::Uid::from_raw)
+                    .map(unistd::Uid::is_root)
+                    .context("some ancestor of the path must exist")?
+                {
+                    // Ok(Some(pri?))
+                    Ok(Some(ctx.escalate_privileges()?))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    fn rm_src_file(&self, ctx: &Ctx) -> Result<()> {
+        let p = self.get_priv(ctx)?;
+
+        fs::remove_file(&self.src)?;
+
+        drop(p);
+        Ok(())
+    }
+
+    fn rm_src_dir_all(&self, ctx: &Ctx) -> Result<()> {
+        let p = self.get_priv(ctx)?;
+
+        fs::remove_dir_all(&self.src)?;
+
+        drop(p);
+        Ok(())
+    }
+
+    fn copy_file_to_src(&self, ctx: &Ctx) -> Result<()> {
+        let p = self.get_priv(ctx)?;
+
+        fs::copy(&self.dest, &self.src)?;
+
+        drop(p);
+        Ok(())
+    }
+
+    fn copy_dir_to_src(&self, ctx: &Ctx) -> Result<()> {
+        let p = self.get_priv(ctx)?;
+
+        fs_extra::dir::copy(
+            &self.dest,
+            &self.src,
+            &fs_extra::dir::CopyOptions::new()
+                .copy_inside(false)
+                .content_only(true),
+        )?;
+
+        drop(p);
+        Ok(())
+    }
+
+    fn symlink_to_src(&self, ctx: &Ctx) -> Result<()> {
+        let p = self.get_priv(ctx)?;
+
+        std::os::unix::fs::symlink(&self.dest, &self.src)?;
+
+        drop(p);
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -225,7 +384,8 @@ struct Resolver {
     ctx: Ctx,
 
     profile_dir: PathBuf,
-    entries: HashSet<PathBuf>,
+    home_entries: HashSet<PathBuf>,
+    non_home_entries: HashSet<PathBuf>,
 }
 
 impl Deref for Resolver {
@@ -238,13 +398,17 @@ impl Deref for Resolver {
 
 enum PathResolutionError {
     InRepo,
-    OutsideHome,
     OutsideRepo,
 }
 
 impl Resolver {
     fn resolve_path(&self, path: impl AsRef<str>) -> Result<PathBuf> {
-        let filename = PathBuf::from(shellexpand::tilde(path.as_ref()).into_owned());
+        let filename = PathBuf::from(
+            shellexpand::tilde_with_context(path.as_ref(), || {
+                Some(self.canon_home_dir.to_string_lossy())
+            })
+            .into_owned(),
+        );
         let src = filename
             .parent()
             .map(|p| {
@@ -267,10 +431,23 @@ impl Resolver {
         }
 
         let relative = dest.strip_prefix(&self.profile_dir).unwrap();
+        let (src, relative) = match relative.starts_with(HOME) {
+            true => {
+                let stripped = relative.strip_prefix(HOME).unwrap().to_path_buf();
+                (
+                    self.canon_home_dir.join(&stripped),
+                    RelativePath::Home(stripped),
+                )
+            }
+            false => (
+                PathBuf::from("/").join(relative),
+                RelativePath::NonHome(relative.to_path_buf()),
+            ),
+        };
 
         Ok(Entry {
-            src: self.canon_home_dir.join(relative),
-            relative: relative.to_path_buf(),
+            src,
+            relative,
             dest: dest.to_path_buf(),
         })
     }
@@ -282,26 +459,42 @@ impl Resolver {
             return Err(PathResolutionError::InRepo);
         }
 
-        // Validate that the source path is within the home directory
-        if !src.starts_with(&self.canon_home_dir) {
-            return Err(PathResolutionError::OutsideHome);
-        }
-
-        let relative_src = src.strip_prefix(&self.canon_home_dir).unwrap();
-        let dest = self.profile_dir.join(relative_src);
+        let (dest, relative) = match src.starts_with(&self.canon_home_dir) {
+            true => {
+                let stripped = src.strip_prefix(&self.canon_home_dir).unwrap();
+                (
+                    self.profile_dir.join(HOME).join(stripped),
+                    RelativePath::Home(stripped.to_path_buf()),
+                )
+            }
+            false => {
+                let stripped = src.strip_prefix("/").expect("path must be absolute");
+                (
+                    self.profile_dir.join(stripped),
+                    RelativePath::NonHome(stripped.to_path_buf()),
+                )
+            }
+        };
 
         Ok(Entry {
             src: src.to_path_buf(),
-            relative: relative_src.to_path_buf(),
+            relative,
             dest,
         })
     }
 
-    fn entry_from_relative(&self, rel: impl AsRef<Path>) -> Entry {
-        Entry {
-            src: self.canon_home_dir.join(rel.as_ref()),
-            relative: rel.as_ref().to_path_buf(),
-            dest: self.profile_dir.join(rel.as_ref()),
+    fn entry_from_relative(&self, rel: &RelativePath) -> Entry {
+        match rel {
+            RelativePath::Home(p) => Entry {
+                src: self.canon_home_dir.join(p),
+                relative: rel.clone(),
+                dest: self.profile_dir.join(HOME).join(p),
+            },
+            RelativePath::NonHome(p) => Entry {
+                src: PathBuf::from("/").join(p),
+                relative: rel.clone(),
+                dest: self.profile_dir.join(p),
+            },
         }
     }
 
@@ -311,10 +504,6 @@ impl Resolver {
             Ok(p) => Ok(p),
             Err(PathResolutionError::OutsideRepo) => match self.entry_from_src(&path) {
                 Ok(p) => Ok(p),
-                Err(PathResolutionError::OutsideHome) => Err(anyhow!(
-                    "failed to find entry for path: {}",
-                    path_str.as_ref()
-                )),
                 Err(_) => unreachable!(),
             },
             Err(_) => unreachable!(),
@@ -322,22 +511,34 @@ impl Resolver {
     }
 
     fn contains(&self, e: &Entry) -> bool {
-        self.entries.contains(&e.relative)
+        match &e.relative {
+            RelativePath::Home(p) => self.home_entries.contains(p),
+            RelativePath::NonHome(p) => self.non_home_entries.contains(p),
+        }
     }
 
     /// creates new symlinks for any entry that does not have a symlink
     fn sync(&self, force: bool) -> Result<()> {
-        for p in self.entries.iter() {
-            let e = self.entry_from_relative(p);
-
+        for e in self
+            .home_entries
+            .iter()
+            .map(|p| self.entry_from_relative(&RelativePath::Home(p.to_path_buf())))
+            .chain(
+                self.non_home_entries
+                    .iter()
+                    .map(|p| self.entry_from_relative(&RelativePath::NonHome(p.to_path_buf()))),
+            )
+        {
+            let privilege = e.get_priv(&self.ctx)?;
             fs::create_dir_all(e.src.parent().unwrap())?;
+            drop(privilege);
 
             if !e.src.exists() {
                 println!(
                     "creating symlink\n  src: {:?}\n  dst: {:?}",
                     &e.src, &e.dest
                 );
-                std::os::unix::fs::symlink(&e.dest, &e.src)?;
+                e.symlink_to_src(&self.ctx)?;
                 continue;
             }
 
@@ -354,7 +555,7 @@ impl Resolver {
                 return Err(anyhow!("bad Entry: {:?}.", &e.src));
             }
 
-            let dump_to = self.dump_dir.join(&e.relative);
+            let dump_to = self.dump_dir.join(e.relative.clone().relative());
 
             println!(
                 "moving contents to dump\n  src: {:?}\n  dump: {:?}",
@@ -365,7 +566,7 @@ impl Resolver {
 
             if e.src.is_file() || e.src.is_symlink() {
                 let _ = fs::copy(&e.src, &dump_to)?;
-                fs::remove_file(&e.src)?;
+                e.rm_src_file(&self.ctx)?;
             } else if e.src.is_dir() {
                 fs_extra::dir::copy(
                     &e.src,
@@ -374,7 +575,7 @@ impl Resolver {
                         .copy_inside(false)
                         .content_only(true),
                 )?;
-                fs::remove_dir_all(&e.src)?;
+                e.rm_src_dir_all(&self.ctx)?;
             } else {
                 return Err(anyhow!(
                     "cannot handle this type of file or whatever: {:?}",
@@ -383,24 +584,33 @@ impl Resolver {
             }
             println!();
 
-            std::os::unix::fs::symlink(&e.dest, &e.src)?;
+            e.symlink_to_src(&self.ctx)?;
         }
 
         Ok(())
     }
 
     fn unlink_all(&self, ignore_non_links: bool) -> Result<()> {
-        for p in self.entries.iter() {
-            let e = self.entry_from_relative(p);
+        for e in self
+            .home_entries
+            .iter()
+            .map(|p| self.entry_from_relative(&RelativePath::Home(p.to_path_buf())))
+            .chain(
+                self.non_home_entries
+                    .iter()
+                    .map(|p| self.entry_from_relative(&RelativePath::NonHome(p.to_path_buf()))),
+            )
+        {
             if !e.src.is_symlink() || e.src.canonicalize()? != e.dest {
                 if ignore_non_links {
                     continue;
                 } else {
-                    return Err(anyhow!("bad Entry: {:?}.", p));
+                    return Err(anyhow!("bad Entry: {:?}.", &e.relative));
                 }
             }
+
             println!("deleting symlink: {:?}\n", &e.src);
-            fs::remove_file(&e.src)?;
+            e.rm_src_file(&self.ctx)?;
         }
 
         Ok(())
@@ -408,8 +618,25 @@ impl Resolver {
 }
 
 fn main() -> Result<()> {
+    let (root_u, non_root_u) = if unistd::geteuid().is_root() {
+        let non_root_user = users::get_user_by_name(&std::env::var("SUDO_USER")?)
+            .context("configma must be run as a non root user or using sudo")?;
+        let root_user =
+            users::get_user_by_name(&std::env::var("USER")?).context("USER is not set :/")?;
+
+        // drop effective privileges until required
+        unistd::setegid(unistd::Gid::from_raw(non_root_user.primary_group_id()))?;
+        unistd::seteuid(unistd::Uid::from_raw(non_root_user.uid()))?;
+
+        (Some(root_user), non_root_user)
+    } else {
+        let user =
+            users::get_user_by_name(&std::env::var("USER")?).context("USER is not set :/")?;
+        (None, user)
+    };
+
     let cli = Cli::parse();
-    let ctx = Ctx::new(&cli)?;
+    let ctx = Ctx::new(&cli, root_u, non_root_u)?;
 
     if !ctx.profile_file.exists() {
         match &cli.command {
@@ -461,7 +688,7 @@ fn main() -> Result<()> {
                 let e = rsv.entry(&src)?;
                 if rsv.contains(&e) {
                     println!("deleting symlink: {}\n", &src);
-                    fs::remove_file(&e.src)?;
+                    e.rm_src_file(&rsv.ctx)?;
                 } else {
                     return Err(anyhow!("file {} not maintained by configma", &src));
                 }
@@ -477,19 +704,13 @@ fn main() -> Result<()> {
                 if rsv.contains(&e) {
                     println!("restoring path\n  src: {:?}\n  dst: {:?}\n", e.src, e.dest,);
 
-                    fs::remove_file(&e.src)?;
+                    e.rm_src_file(&rsv.ctx)?;
                     if e.dest.is_dir() {
                         fs::remove_file(e.dest.join(DIR_STUB))?;
-                        fs_extra::dir::copy(
-                            &e.dest,
-                            &e.src,
-                            &fs_extra::dir::CopyOptions::new()
-                                .copy_inside(false)
-                                .content_only(true),
-                        )?;
+                        e.copy_dir_to_src(&rsv.ctx)?;
                         fs::remove_dir_all(&e.dest)?;
                     } else if e.dest.is_file() {
-                        fs::copy(&e.dest, &e.src)?;
+                        e.copy_file_to_src(&rsv.ctx)?;
                         fs::remove_file(&e.dest)?;
                     } else {
                         return Err(anyhow!(
@@ -499,7 +720,7 @@ fn main() -> Result<()> {
                     }
 
                     // remove empty parent dirs
-                    let mut parent = e.relative.clone();
+                    let mut parent = e.relative.clone().relative();
                     while parent.pop() && !parent.to_string_lossy().is_empty() {
                         let p = rsv.profile_dir.join(&parent);
                         if p.read_dir()?.count() == 0 {
@@ -521,16 +742,11 @@ fn main() -> Result<()> {
                         println!("the path {} is already in the repo.", src);
                         continue;
                     }
-                    Err(PathResolutionError::OutsideHome) => {
-                        return Err(anyhow!(
-                            "Adding paths outside of HOME directory is not allowed."
-                        ))
-                    }
                     Err(PathResolutionError::OutsideRepo) => unreachable!(),
                 };
 
                 let mut p = rsv.profile_dir.clone();
-                for c in e.relative.parent().unwrap().components() {
+                for c in e.relative.clone().relative().parent().unwrap().components() {
                     let std::path::Component::Normal(c) = c else {unreachable!()};
                     p.push(c);
 
@@ -555,9 +771,11 @@ fn main() -> Result<()> {
                 fs::create_dir_all(e.dest.parent().unwrap())?;
 
                 if e.src.is_file() {
+                    // the files should have read permissions without root
                     fs::copy(&e.src, &e.dest)?;
-                    fs::remove_file(&e.src)?;
+                    e.rm_src_file(&rsv.ctx)?;
                 } else if e.src.is_dir() {
+                    // the files should have read permissions without root
                     fs_extra::dir::copy(
                         &e.src,
                         &e.dest,
@@ -565,7 +783,7 @@ fn main() -> Result<()> {
                             .copy_inside(false)
                             .content_only(true),
                     )?;
-                    fs::remove_dir_all(&e.src)?;
+                    e.rm_src_dir_all(&rsv.ctx)?;
                     let _ = fs::File::create(e.dest.join(DIR_STUB))?;
                 } else {
                     return Err(anyhow!(
@@ -574,7 +792,7 @@ fn main() -> Result<()> {
                     ));
                 }
 
-                std::os::unix::fs::symlink(&e.dest, &e.src)?;
+                e.symlink_to_src(&rsv.ctx)?;
             }
         }
     }
