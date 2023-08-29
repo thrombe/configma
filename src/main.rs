@@ -534,17 +534,21 @@ impl Resolver {
             fs::create_dir_all(e.src.parent().unwrap())?;
             drop(privilege);
 
-            if !e.src.exists() {
-                println!(
-                    "creating symlink\n  src: {:?}\n  dst: {:?}",
-                    &e.src, &e.dest
-                );
-                e.symlink_to_src(&self.ctx)?;
-                continue;
-            }
-
-            if e.src.canonicalize()? == e.dest {
-                continue;
+            match (e.src.exists(), e.src.is_symlink()) {
+                (false, false) => {
+                    println!(
+                        "creating symlink\n  src: {:?}\n  dst: {:?}",
+                        &e.src, &e.dest
+                    );
+                    e.symlink_to_src(&self.ctx)?;
+                    continue;
+                }
+                (true, true) => {
+                    if e.src.canonicalize()? == e.dest {
+                        continue;
+                    }
+                }
+                _ => {}
             }
 
             println!(
@@ -566,7 +570,12 @@ impl Resolver {
             fs::create_dir_all(dump_to.parent().unwrap())?;
 
             if e.src.is_file() || e.src.is_symlink() {
-                let _ = fs::copy(&e.src, &dump_to)?;
+                if e.src.is_symlink() {
+                    let to = fs::read_link(&e.src)?;
+                    std::os::unix::fs::symlink(to, &dump_to)?;
+                } else {
+                    let _ = fs::copy(&e.src, &dump_to)?;
+                }
                 e.rm_src_file(&self.ctx)?;
             } else if e.src.is_dir() {
                 fs_extra::dir::copy(
@@ -748,7 +757,9 @@ fn main() -> Result<()> {
 
                 let mut p = rsv.profile_dir.clone();
                 for c in e.relative.clone().relative().parent().unwrap().components() {
-                    let std::path::Component::Normal(c) = c else {unreachable!()};
+                    let std::path::Component::Normal(c) = c else {
+                        unreachable!()
+                    };
                     p.push(c);
 
                     p.push(DIR_STUB);
