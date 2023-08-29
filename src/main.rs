@@ -310,6 +310,7 @@ impl Entry {
                 if self
                     .src
                     .ancestors()
+                    .skip(1)
                     .find(|p| p.exists())
                     .map(nix::sys::stat::stat)
                     .transpose()?
