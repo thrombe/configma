@@ -1,4 +1,5 @@
 /target
 test_repo
 test_configs
+.direnv
 # configma.toml
