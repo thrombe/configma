@@ -8,5 +8,6 @@ pkgs.mkShell {
     unstable.rustc
     unstable.clippy
     unstable.rust-analyzer
+    unstable.rustfmt
   ];
 }
