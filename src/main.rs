@@ -82,7 +82,7 @@ struct Config {
     repo: String,
 }
 
-const DIR_STUB: &str = "configma_dir.stub";
+const STUB: &str = "cstub";
 const HOME: &str = "home";
 
 fn generate_entry_set(parent_dir: impl AsRef<Path>) -> Result<HashSet<PathBuf>> {
@@ -100,9 +100,11 @@ fn generate_entry_set(parent_dir: impl AsRef<Path>) -> Result<HashSet<PathBuf>> 
                 let rel_path = p.strip_prefix(&parent_dir)?.to_path_buf();
 
                 if ft.is_file() {
-                    set.insert(rel_path);
+                    if p.extension().map(|e| e != STUB).unwrap_or(true) {
+                        set.insert(rel_path);
+                    }
                 } else if ft.is_dir() {
-                    if p.join(DIR_STUB).exists() {
+                    if dir.join(format!("{}.{STUB}", p.name())).exists() {
                         set.insert(rel_path);
                     } else {
                         dir_buff.push(p);
@@ -224,7 +226,7 @@ impl Ctx {
             let path = dir.path();
 
             // None only if path ends in '..'
-            if path.file_name().unwrap() == HOME {
+            if path.name() == HOME {
                 continue;
             }
 
@@ -235,7 +237,7 @@ impl Ctx {
                 entries.extend(
                     dir_entries
                         .into_iter()
-                        .map(|p| PathBuf::from(path.file_name().unwrap()).join(p)),
+                        .map(|p| PathBuf::from(path.file_name().expect("no file name")).join(p)),
                 );
             } else {
                 println!("ignoring unhandlable path: {:?}", &path);
@@ -707,7 +709,12 @@ fn main() -> Result<()> {
 
                     e.rm_src_file(&rsv.ctx)?;
                     if e.dest.is_dir() {
-                        fs::remove_file(e.dest.join(DIR_STUB))?;
+                        fs::remove_file(
+                            e.dest.parent().expect("path cannot be root").join(format!(
+                                "{}.{STUB}",
+                                e.dest.name()
+                            )),
+                        )?;
                         e.copy_dir_to_src(&rsv.ctx)?;
                         fs::remove_dir_all(&e.dest)?;
                     } else if e.dest.is_file() {
@@ -748,10 +755,11 @@ fn main() -> Result<()> {
 
                 let mut p = rsv.profile_dir.clone();
                 for c in e.relative.clone().relative().parent().unwrap().components() {
-                    let std::path::Component::Normal(c) = c else {unreachable!()};
-                    p.push(c);
+                    let std::path::Component::Normal(c) = c else {
+                        unreachable!()
+                    };
+                    p.push(format!("{}.{STUB}", c.to_str().unwrap()));
 
-                    p.push(DIR_STUB);
                     if p.exists() {
                         return Err(anyhow!(
                             "path is already in a directory managed by configma\n  src: {}\n  dir: {:?}\n",
@@ -760,6 +768,7 @@ fn main() -> Result<()> {
                         ));
                     }
                     p.pop();
+                    p.push(c);
                 }
 
                 if rsv.contains(&e) {
@@ -785,7 +794,12 @@ fn main() -> Result<()> {
                             .content_only(true),
                     )?;
                     e.rm_src_dir_all(&rsv.ctx)?;
-                    let _ = fs::File::create(e.dest.join(DIR_STUB))?;
+                    let _ = fs::File::create(
+                        e.dest
+                            .parent()
+                            .expect("path cannot be root")
+                            .join(format!("{}.{STUB}", e.dest.name())),
+                    )?;
                 } else {
                     return Err(anyhow!(
                         "cannot handle this type of file or whatever: {}",
@@ -799,4 +813,25 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+trait Convenience {
+    fn name(&self) -> &str;
+}
+
+impl Convenience for &Path {
+    fn name(&self) -> &str {
+        self.file_name()
+            .expect("no file name on file")
+            .to_str()
+            .expect("non utf string?")
+    }
+}
+impl Convenience for PathBuf {
+    fn name(&self) -> &str {
+        self.file_name()
+            .expect("no file name on file")
+            .to_str()
+            .expect("non utf string?")
+    }
 }
