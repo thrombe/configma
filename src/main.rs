@@ -104,7 +104,7 @@ fn generate_entry_set(parent_dir: impl AsRef<Path>) -> Result<HashSet<PathBuf>> 
                         set.insert(rel_path);
                     }
                 } else if ft.is_dir() {
-                    if dir.join(format!("{}.{STUB}", p.name())).exists() {
+                    if dir.join(format!(".{}.{STUB}", p.name())).exists() {
                         set.insert(rel_path);
                     } else {
                         dir_buff.push(p);
@@ -711,7 +711,7 @@ fn main() -> Result<()> {
                     if e.dest.is_dir() {
                         fs::remove_file(
                             e.dest.parent().expect("path cannot be root").join(format!(
-                                "{}.{STUB}",
+                                ".{}.{STUB}",
                                 e.dest.name()
                             )),
                         )?;
@@ -758,7 +758,7 @@ fn main() -> Result<()> {
                     let std::path::Component::Normal(c) = c else {
                         unreachable!()
                     };
-                    p.push(format!("{}.{STUB}", c.to_str().unwrap()));
+                    p.push(format!(".{}.{STUB}", c.to_str().unwrap()));
 
                     if p.exists() {
                         return Err(anyhow!(
@@ -798,7 +798,7 @@ fn main() -> Result<()> {
                         e.dest
                             .parent()
                             .expect("path cannot be root")
-                            .join(format!("{}.{STUB}", e.dest.name())),
+                            .join(format!(".{}.{STUB}", e.dest.name())),
                     )?;
                 } else {
                     return Err(anyhow!(
