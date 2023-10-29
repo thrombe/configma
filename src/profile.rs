@@ -338,13 +338,24 @@ impl Profile {
 
     pub fn remove_from_active(&mut self, src: impl AsRef<str>, ctx: &Ctx) -> Result<()> {
         let src = src.as_ref();
-        let pos = self
+        let mut pos = None;
+        for (i, m) in self
             .active_conf
             .modules
             .iter()
+            .enumerate()
             .rev()
-            .position(|m| self.modules.contains_key(m))
-            .with_context(|| anyhow!("no active module contains '{}'", src))?;
+            .map(|(i, m)| (i, self.modules.get(m).expect("checked in Profile::new")))
+        {
+            let e = m.entry(src, ctx)?;
+            if m.contains(&e) {
+                pos = Some(i);
+                break;
+            }
+        }
+        let Some(pos) = pos else {
+            return Err(anyhow!("no active module contains '{}'", src));
+        };
         let module = self
             .modules
             .get(&self.active_conf.modules[pos])
