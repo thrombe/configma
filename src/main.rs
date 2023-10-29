@@ -21,10 +21,8 @@ pub struct Cli {
     // /// Turn debugging information on
     // #[arg(short, long, action = clap::ArgAction::Count)]
     // pub debug: u8,
-
     #[command(subcommand)]
     pub command: Command,
-
     // #[arg(long = "dry")]
     // pub dry_run: bool,
 }
@@ -155,7 +153,13 @@ fn main() -> Result<()> {
         }
     };
 
-    if !profile.required_conf.modules.contains(&ctx.conf.default_module) {
+    if ctx
+        .conf
+        .default_module
+        .as_ref()
+        .map(|m| !profile.required_conf.modules.contains(m))
+        .unwrap_or(false)
+    {
         return Err(anyhow!("profile must contain the default module."));
     }
 
@@ -171,7 +175,10 @@ fn main() -> Result<()> {
         }
         Command::Remove { src, module: name } => {
             // TODO: validate
-            let name = name.as_ref().unwrap_or(&ctx.conf.default_module);
+            let name = name
+                .as_ref()
+                .or(ctx.conf.default_module.as_ref())
+                .context("no module specified. set default_module in configs or use -m flag")?;
             let module = match profile.modules.get(name) {
                 Some(m) => m,
                 None => return Err(anyhow!("module {} is not active", name)),
@@ -182,7 +189,10 @@ fn main() -> Result<()> {
         }
         Command::Add { src, module: name } => {
             // TODO: validate
-            let name = name.as_ref().unwrap_or(&ctx.conf.default_module);
+            let name = name
+                .as_ref()
+                .or(ctx.conf.default_module.as_ref())
+                .context("no module specified. set default_module in configs or use -m flag")?;
             let module = match profile.modules.get(name) {
                 Some(m) => m,
                 None => return Err(anyhow!("module {} is not active", name)),

@@ -10,8 +10,7 @@ use crate::{entry::Privilege, Cli};
 #[derive(Deserialize, Debug)]
 pub struct Config {
     pub repo: String,
-    // TODO: make this optional
-    pub default_module: String,
+    pub default_module: Option<String>,
     pub profiles: Vec<ProfileDesc>,
     pub modules: Vec<ModuleDesc>,
 }
