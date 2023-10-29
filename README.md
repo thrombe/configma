@@ -70,18 +70,18 @@ configma sync
 
 # todo
 - [ ] allow using multiple profiles at once
-  - [.] rename profiles to 'modules' as it would make more sense
-  - [.] store a list of modules in module file
+  - [x] rename profiles to 'modules' as it would make more sense
+  - [x] store a list of modules in module file
   - [ ] ask the user which module they want to add stuff in / remove stuff from (maybe allow setting a default module for this)
     - [ ] fzf for choosing?
-  - [.] modules mentioned late in the list takes precedence (easier to code)
-    - [.] what if one module wants a dir, but another wants a few files from that dir?
+  - [x] modules mentioned late in the list takes precedence (easier to code)
+    - [x] what if one module wants a dir, but another wants a few files from that dir?
   - this will solve the template problem without inheritance :}
-  - [.] let profiles be a list of modules that the user can switch between (or set and forget on different devices)
+  - [x] let profiles be a list of modules that the user can switch between (or set and forget on different devices)
     - config.toml, profile.active
     - git ignore profile.active
   - [ ] allow specifying source of modules (some can be stored in private repos / people can share base modules)
-    - [.] full paths
+    - [x] full paths
     - [ ] relative paths from the repo
   - [ ] allow disabling modules
     - maybe a disable command
@@ -92,8 +92,8 @@ configma sync
   - fs_extra::dir::copy has this behavior
 - [ ] When moving stuff to and from the same mounted fs, simply rename stuff instead of copying and deleting.
 - [ ] Add a set-repo subcommand (with -f) that sets the repo path in configma/config.toml
-- [.] move stub file outside directories
-  - [.] undo this but stub files should be hidden
+- [x] move stub file outside directories
+  - [x] undo this but stub files should be hidden
 - [ ] keep logs of everything done by configma
 - [ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
 - [ ] Git integration
