@@ -88,10 +88,13 @@ configma sync
     - maybe save the list of active modules somewhere and check for missing modules in config and update accordingly
 - [ ] allow restoring the system to a dumped (~/configma/dumps) configuration (fzf choice?)
 - [ ] fzf interface for choosing profiles
+- [ ] Simlinks to dirs are followed when moving stuff to the repo. instead they should just be copied
+  - fs_extra::dir::copy has this behavior
+- [ ] When moving stuff to and from the same mounted fs, simply rename stuff instead of copying and deleting.
+- [ ] Add a set-repo subcommand (with -f) that sets the repo path in configma/config.toml
 - [.] move stub file outside directories
   - [.] undo this but stub files should be hidden
 - [ ] keep logs of everything done by configma
 - [ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
 - [ ] Git integration
-- [ ] Add a set-repo subcommand (with -f) that sets the repo path in configma/config.toml 
 
