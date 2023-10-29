@@ -89,7 +89,7 @@ configma sync
 - [ ] allow restoring the system to a dumped (~/configma/dumps) configuration (fzf choice?)
 - [ ] fzf interface for choosing profiles
 - [.] move stub file outside directories
-  - [ ] undo this but stub files should be hidden
+  - [.] undo this but stub files should be hidden
 - [ ] keep logs of everything done by configma
 - [ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
 - [ ] Git integration

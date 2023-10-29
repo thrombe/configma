@@ -9,7 +9,7 @@ use nix::unistd;
 
 use crate::config::Ctx;
 
-pub const STUB: &str = "cstub";
+pub const STUB: &str = ".configma.stub";
 pub const HOME: &str = "home";
 
 #[derive(Debug)]
@@ -152,11 +152,9 @@ pub fn generate_entry_set(parent_dir: impl AsRef<Path>) -> Result<HashSet<PathBu
                 let rel_path = p.strip_prefix(&parent_dir)?.to_path_buf();
 
                 if ft.is_file() {
-                    if p.extension().map(|e| e != STUB).unwrap_or(true) {
-                        set.insert(rel_path);
-                    }
+                    set.insert(rel_path);
                 } else if ft.is_dir() {
-                    if dir.join(format!(".{}.{STUB}", p.name())).exists() {
+                    if p.join(STUB).exists() {
                         set.insert(rel_path);
                     } else {
                         dir_buff.push(p);

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{Ctx, ProfileDesc},
-    entry::{Convenience, Entry, RelativePath, STUB},
+    entry::{Entry, RelativePath, STUB},
     module::{Module, PathResolutionError},
 };
 
@@ -278,8 +278,9 @@ impl Profile {
             let std::path::Component::Normal(c) = c else {
                 unreachable!()
             };
-            p.push(format!(".{}.{STUB}", c.to_str().unwrap()));
+            p.push(c);
 
+            p.push(STUB);
             if p.exists() {
                 return Err(anyhow!(
                     "path is already in a directory managed by configma\n  src: {}\n  dir: {:?}\n",
@@ -288,7 +289,6 @@ impl Profile {
                 ));
             }
             p.pop();
-            p.push(c);
         }
 
         if dest_module.contains(&e) {
@@ -314,12 +314,7 @@ impl Profile {
                     .content_only(true),
             )?;
             e.rm_src_dir_all(ctx)?;
-            let _ = fs::File::create(
-                e.dest
-                    .parent()
-                    .expect("path cannot be root")
-                    .join(format!(".{}.{STUB}", e.dest.name())),
-            )?;
+            let _ = fs::File::create(e.dest.join(STUB))?;
         } else {
             return Err(anyhow!(
                 "cannot handle this type of file or whatever: {}",
@@ -426,12 +421,7 @@ impl Profile {
 
             e.rm_src_file(ctx)?;
             if e.dest.is_dir() {
-                fs::remove_file(
-                    e.dest
-                        .parent()
-                        .expect("path cannot be root")
-                        .join(format!(".{}.{STUB}", e.dest.name())),
-                )?;
+                fs::remove_file(e.dest.join(STUB))?;
                 e.copy_dir_to_src(ctx)?;
                 fs::remove_dir_all(&e.dest)?;
             } else if e.dest.is_file() {
