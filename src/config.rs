@@ -31,7 +31,7 @@ pub struct Ctx {
     pub non_root_user: User,
     pub root_user: Option<User>,
 
-    pub _home_dir: PathBuf,
+    pub home_dir: PathBuf,
     pub canon_home_dir: PathBuf,
 
     pub conf: Config,
@@ -94,7 +94,7 @@ impl Ctx {
 
         let s = Self {
             canon_home_dir: home_dir.canonicalize()?,
-            _home_dir: home_dir,
+            home_dir,
             conf,
             _config_dir: config_dir,
             dump_dir,

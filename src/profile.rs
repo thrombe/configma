@@ -35,7 +35,7 @@ impl Profile {
         for e in &ctx.conf.modules {
             match &e.path {
                 Some(p) => {
-                    // TODO: repo path should be resolved
+                    let p = shellexpand::tilde_with_context(p, || Some(ctx.home_dir.to_string_lossy())).to_string();
                     let module = Module::new(e.name.to_owned(), p)?;
                     modules.insert(e.name.to_owned(), module);
                 }
