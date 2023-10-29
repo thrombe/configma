@@ -41,9 +41,9 @@ impl Profile {
             match &e.path {
                 Some(p) => {
                     let p =
-                        shellexpand::tilde_with_context(p, || Some(ctx.home_dir.to_string_lossy()))
+                        shellexpand::tilde_with_context(p, || Some(ctx.canon_home_dir.to_string_lossy()))
                             .to_string();
-                    let module = Module::new(e.name.to_owned(), p)?;
+                    let module = Module::new(e.name.to_owned(), PathBuf::from(p).canonicalize()?)?;
                     modules.insert(e.name.to_owned(), module);
                 }
                 None => {
