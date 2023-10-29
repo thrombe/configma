@@ -70,17 +70,20 @@ configma sync
 
 # todo
 - [ ] allow using multiple profiles at once
-  - rename profiles to 'modules' as it would make more sense
-  - store a list of modules in module file
-  - ask the user which module they want to add stuff in / remove stuff from (maybe allow setting a default module for this)
+  - [.] rename profiles to 'modules' as it would make more sense
+  - [.] store a list of modules in module file
+  - [ ] ask the user which module they want to add stuff in / remove stuff from (maybe allow setting a default module for this)
     - [ ] fzf for choosing?
-  - modules mentioned late in the list takes precedence (easier to code)
-    - [ ] what if one module wants a dir, but another wants a few files from that dir?
+  - [.] modules mentioned late in the list takes precedence (easier to code)
+    - [.] what if one module wants a dir, but another wants a few files from that dir?
   - this will solve the template problem without inheritance :}
-  - let profiles be a list of modules that the user can switch between (or set and forget on different devices)
-    - profiles.toml, profile.active
+  - [.] let profiles be a list of modules that the user can switch between (or set and forget on different devices)
+    - config.toml, profile.active
     - git ignore profile.active
-  - [ ] allow specifying source of modules (some can be stored in private repos / people can share base modules)
+  - [.] allow specifying source of modules (some can be stored in private repos / people can share base modules)
+  - [ ] allow disabling modules
+    - maybe a disable command
+    - maybe save the list of active modules somewhere and check for missing modules in config and update accordingly
 - [ ] allow restoring the system to a dumped (~/configma/dumps) configuration (fzf choice?)
 - [ ] fzf interface for choosing profiles
 - [.] move stub file outside directories

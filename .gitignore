@@ -1,5 +1,8 @@
 /target
 test_repo
 test_configs
+dumps
+profile.active.toml
+config.toml
 .direnv
 # configma.toml
