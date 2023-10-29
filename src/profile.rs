@@ -369,7 +369,7 @@ impl Profile {
             RelativePath::NonHome(p) => module.non_home_entries.remove(p),
         };
 
-        self.sync_active(&e, ctx)?;
+        self.sync_active(src, ctx)?;
         Ok(())
     }
 
@@ -395,11 +395,12 @@ impl Profile {
             RelativePath::NonHome(p) => module.non_home_entries.remove(p),
         };
 
-        self.sync_active(&e, ctx)?;
+        self.sync_active(src, ctx)?;
         Ok(())
     }
 
-    fn sync_active(&self, e: &Entry, ctx: &Ctx) -> Result<()> {
+    fn sync_active(&self, src: impl AsRef<str>, ctx: &Ctx) -> Result<()> {
+        let src = src.as_ref();
         for m in self
             .active_conf
             .modules
@@ -407,8 +408,9 @@ impl Profile {
             .rev()
             .map(|m| self.modules.get(m).expect("checked in Profile::new"))
         {
-            if m.contains(e) {
-                self.sync_entry(e, true, ctx)?;
+            let e = m.entry(src, ctx)?;
+            if m.contains(&e) {
+                self.sync_entry(&e, true, ctx)?;
                 return Ok(());
             }
         }
