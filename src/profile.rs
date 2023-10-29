@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{Ctx, ProfileDesc},
-    entry::{RelativePath, STUB},
+    entry::{Convenience, Entry, RelativePath, STUB},
     module::{Module, PathResolutionError},
 };
 
@@ -40,7 +40,9 @@ impl Profile {
         for e in &ctx.conf.modules {
             match &e.path {
                 Some(p) => {
-                    let p = shellexpand::tilde_with_context(p, || Some(ctx.home_dir.to_string_lossy())).to_string();
+                    let p =
+                        shellexpand::tilde_with_context(p, || Some(ctx.home_dir.to_string_lossy()))
+                            .to_string();
                     let module = Module::new(e.name.to_owned(), p)?;
                     modules.insert(e.name.to_owned(), module);
                 }
@@ -95,7 +97,6 @@ impl Profile {
             module.unlink_all(force, ctx)?;
         }
 
-        // TODO: give error when trying to add something to a module but other module already has the thing (only if other has higher precedence)
         let mut synced = HashSet::new();
         for name in self.required_conf.modules.iter().rev() {
             let module = self.modules.get(name).expect("checked in Profile::new");
@@ -115,70 +116,75 @@ impl Profile {
                 }
                 synced.insert(src);
 
-                let privilege = e.get_priv(ctx)?;
-                fs::create_dir_all(e.src.parent().unwrap())?;
-                drop(privilege);
-
-                if !e.src.exists() {
-                    println!(
-                        "creating symlink\n  src: {:?}\n  dst: {:?}",
-                        &e.src, &e.dest
-                    );
-                    e.symlink_to_src(ctx)?;
-                    continue;
-                }
-
-                if e.src.canonicalize()? == e.dest {
-                    continue;
-                }
-
-                println!(
-                    "creating symlink\n  src: {:?}\n  dst: {:?}",
-                    &e.src, &e.dest
-                );
-
-                if !force {
-                    return Err(anyhow!(
-                        "there is already a file/dir at: {:?}. use -f flag to force sync",
-                        &e.src
-                    ));
-                }
-
-                let dump_to = ctx.dump_dir.join(e.relative.clone().relative());
-
-                println!(
-                    "moving contents to dump\n  src: {:?}\n  dump: {:?}",
-                    &e.src, &dump_to
-                );
-
-                fs::create_dir_all(dump_to.parent().unwrap())?;
-
-                if e.src.is_file() || e.src.is_symlink() {
-                    let _ = fs::copy(&e.src, &dump_to)?;
-                    e.rm_src_file(ctx)?;
-                } else if e.src.is_dir() {
-                    fs_extra::dir::copy(
-                        &e.src,
-                        &dump_to,
-                        &fs_extra::dir::CopyOptions::new()
-                            .copy_inside(false)
-                            .content_only(true),
-                    )?;
-                    e.rm_src_dir_all(ctx)?;
-                } else {
-                    return Err(anyhow!(
-                        "cannot handle this type of file or whatever: {:?}",
-                        &e.src
-                    ));
-                }
-                println!();
-
-                e.symlink_to_src(ctx)?;
+                self.sync_entry(&e, force, ctx)?;
             }
         }
 
         let prof = toml::to_string_pretty(&self.required_conf)?;
         fs::write(&ctx.profile_file, prof)?;
+        Ok(())
+    }
+
+    fn sync_entry(&self, e: &Entry, force: bool, ctx: &Ctx) -> Result<()> {
+        let privilege = e.get_priv(ctx)?;
+        fs::create_dir_all(e.src.parent().unwrap())?;
+        drop(privilege);
+
+        if !e.src.exists() {
+            println!(
+                "creating symlink\n  src: {:?}\n  dst: {:?}",
+                &e.src, &e.dest
+            );
+            e.symlink_to_src(ctx)?;
+            return Ok(());
+        }
+
+        if e.src.canonicalize()? == e.dest {
+            return Ok(());
+        }
+
+        println!(
+            "creating symlink\n  src: {:?}\n  dst: {:?}",
+            &e.src, &e.dest
+        );
+
+        if !force {
+            return Err(anyhow!(
+                "there is already a file/dir at: {:?}. use -f flag to force sync",
+                &e.src
+            ));
+        }
+
+        let dump_to = ctx.dump_dir.join(e.relative.clone().relative());
+
+        println!(
+            "moving contents to dump\n  src: {:?}\n  dump: {:?}",
+            &e.src, &dump_to
+        );
+
+        fs::create_dir_all(dump_to.parent().unwrap())?;
+
+        if e.src.is_file() || e.src.is_symlink() {
+            let _ = fs::copy(&e.src, &dump_to)?;
+            e.rm_src_file(ctx)?;
+        } else if e.src.is_dir() {
+            fs_extra::dir::copy(
+                &e.src,
+                &dump_to,
+                &fs_extra::dir::CopyOptions::new()
+                    .copy_inside(false)
+                    .content_only(true),
+            )?;
+            e.rm_src_dir_all(ctx)?;
+        } else {
+            return Err(anyhow!(
+                "cannot handle this type of file or whatever: {:?}",
+                &e.src
+            ));
+        }
+        println!();
+
+        e.symlink_to_src(ctx)?;
         Ok(())
     }
 
@@ -229,6 +235,220 @@ impl Profile {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn add(&mut self, src: impl AsRef<str>, ctx: &Ctx, dest: impl AsRef<str>) -> Result<()> {
+        let src = src.as_ref();
+        let dest = dest.as_ref();
+        let Some(pos) = self.active_conf.modules.iter().position(|n| n == dest) else {
+            return Err(anyhow!("module {} is not active", dest));
+        };
+        let dest_module = self.modules.get(dest).expect("checked above");
+
+        let e = match dest_module.entry_from_src(dest_module.resolve_path(src, ctx)?, ctx) {
+            Ok(e) => e,
+            Err(PathResolutionError::InRepo) => {
+                println!("the path {} is already in the repo.", src);
+                return Ok(());
+            }
+            Err(PathResolutionError::OutsideRepo) => unreachable!(),
+        };
+
+        // give error when trying to add something to a module but other module already has the thing (only if other has higher precedence)
+        for module in self.active_conf.modules[pos + 1..]
+            .iter()
+            .map(|name| self.modules.get(name).expect("checked in Profile::new"))
+        {
+            if module.home_entries.contains(e.relative.path())
+                || module.non_home_entries.contains(e.relative.path())
+            {
+                return Err(anyhow!(
+                    "path '{}' is already in module '{}' which has higher precedence than destination module '{}'",
+                    src,
+                    &module.name,
+                    dest,
+                ));
+            }
+        }
+
+        let mut p = dest_module.module_dir.clone();
+        for c in e.relative.clone().relative().parent().unwrap().components() {
+            let std::path::Component::Normal(c) = c else {
+                unreachable!()
+            };
+            p.push(format!(".{}.{STUB}", c.to_str().unwrap()));
+
+            if p.exists() {
+                return Err(anyhow!(
+                    "path is already in a directory managed by configma\n  src: {}\n  dir: {:?}\n",
+                    src,
+                    p,
+                ));
+            }
+            p.pop();
+            p.push(c);
+        }
+
+        if dest_module.contains(&e) {
+            println!("path is already maintained by configma: {}\n", src);
+            return Ok(());
+        }
+
+        println!("moving path\n  src: {:?}\n  dst: {:?}\n", &e.src, &e.dest);
+
+        fs::create_dir_all(e.dest.parent().unwrap())?;
+
+        if e.src.is_file() {
+            // the files should have read permissions without root
+            fs::copy(&e.src, &e.dest)?;
+            e.rm_src_file(ctx)?;
+        } else if e.src.is_dir() {
+            // the files should have read permissions without root
+            fs_extra::dir::copy(
+                &e.src,
+                &e.dest,
+                &fs_extra::dir::CopyOptions::new()
+                    .copy_inside(false)
+                    .content_only(true),
+            )?;
+            e.rm_src_dir_all(ctx)?;
+            let _ = fs::File::create(
+                e.dest
+                    .parent()
+                    .expect("path cannot be root")
+                    .join(format!(".{}.{STUB}", e.dest.name())),
+            )?;
+        } else {
+            return Err(anyhow!(
+                "cannot handle this type of file or whatever: {}",
+                &src
+            ));
+        }
+
+        e.symlink_to_src(ctx)?;
+
+        let dest_module = self.modules.get_mut(dest).expect("checked above");
+        match &e.relative {
+            RelativePath::Home(p) => dest_module.home_entries.insert(p.clone()),
+            RelativePath::NonHome(p) => dest_module.non_home_entries.insert(p.clone()),
+        };
+        Ok(())
+    }
+
+    pub fn remove_from_active(&mut self, src: impl AsRef<str>, ctx: &Ctx) -> Result<()> {
+        let src = src.as_ref();
+        let pos = self
+            .active_conf
+            .modules
+            .iter()
+            .rev()
+            .position(|m| self.modules.contains_key(m))
+            .with_context(|| anyhow!("no active module contains '{}'", src))?;
+        let module = self
+            .modules
+            .get(&self.active_conf.modules[pos])
+            .expect("checked above");
+
+        let e = module.entry(src, ctx)?;
+        self._remove(&e, ctx, module)?;
+
+        let module = self
+            .modules
+            .get_mut(&self.active_conf.modules[pos])
+            .expect("checked above");
+        match &e.relative {
+            RelativePath::Home(p) => module.home_entries.remove(p),
+            RelativePath::NonHome(p) => module.non_home_entries.remove(p),
+        };
+
+        self.sync_active(&e, ctx)?;
+        Ok(())
+    }
+
+    // find module using whatever user picked
+    // move file from module repo to dump
+    // delete entry from module in memory (just for consistency)
+    // check if any other module has the same entry
+    // either simlink the other module's entry, or restore entry from dump to the required location
+    pub fn remove(&mut self, src: impl AsRef<str>, ctx: &Ctx, name: impl AsRef<str>) -> Result<()> {
+        let src = src.as_ref();
+        let name = name.as_ref();
+        let Some(_) = self.active_conf.modules.iter().position(|n| n == name) else {
+            return Err(anyhow!("module '{}' is not active", name));
+        };
+        let module = self.modules.get(name).expect("checked above");
+
+        let e = module.entry(src, ctx)?;
+        self._remove(&e, ctx, module)?;
+
+        let module = self.modules.get_mut(name).expect("checked above");
+        match &e.relative {
+            RelativePath::Home(p) => module.home_entries.remove(p),
+            RelativePath::NonHome(p) => module.non_home_entries.remove(p),
+        };
+
+        self.sync_active(&e, ctx)?;
+        Ok(())
+    }
+
+    fn sync_active(&self, e: &Entry, ctx: &Ctx) -> Result<()> {
+        for m in self
+            .active_conf
+            .modules
+            .iter()
+            .rev()
+            .map(|m| self.modules.get(m).expect("checked in Profile::new"))
+        {
+            if m.contains(e) {
+                self.sync_entry(e, true, ctx)?;
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    fn _remove(&self, e: &Entry, ctx: &Ctx, module: &Module) -> Result<()> {
+        if module.contains(e) {
+            println!("restoring path\n  src: {:?}\n  dst: {:?}\n", e.src, e.dest,);
+
+            e.rm_src_file(ctx)?;
+            if e.dest.is_dir() {
+                fs::remove_file(
+                    e.dest
+                        .parent()
+                        .expect("path cannot be root")
+                        .join(format!(".{}.{STUB}", e.dest.name())),
+                )?;
+                e.copy_dir_to_src(ctx)?;
+                fs::remove_dir_all(&e.dest)?;
+            } else if e.dest.is_file() {
+                e.copy_file_to_src(ctx)?;
+                fs::remove_file(&e.dest)?;
+            } else {
+                return Err(anyhow!(
+                    "cannot handle this type of file or whatever: '{:?}'",
+                    &e.src
+                ));
+            }
+
+            // remove empty parent dirs
+            let mut parent = e.relative.clone().relative();
+            while parent.pop() && !parent.to_string_lossy().is_empty() {
+                let p = module.module_dir.join(&parent);
+                if p.read_dir()?.count() == 0 {
+                    fs::remove_dir(p)?;
+                } else {
+                    break;
+                }
+            }
+        } else {
+            return Err(anyhow!(
+                "file '{:?}' not in module '{}'",
+                &e.src,
+                module.name
+            ));
+        }
         Ok(())
     }
 }

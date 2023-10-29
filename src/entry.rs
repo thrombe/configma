@@ -41,6 +41,13 @@ impl RelativePath {
             RelativePath::NonHome(p) => p,
         }
     }
+
+    pub fn path(&self) -> &Path {
+        match &self {
+            RelativePath::Home(p) => p,
+            RelativePath::NonHome(p) => p,
+        }
+    }
 }
 
 #[derive(Debug)]

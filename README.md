@@ -80,13 +80,16 @@ configma sync
   - [.] let profiles be a list of modules that the user can switch between (or set and forget on different devices)
     - config.toml, profile.active
     - git ignore profile.active
-  - [.] allow specifying source of modules (some can be stored in private repos / people can share base modules)
+  - [ ] allow specifying source of modules (some can be stored in private repos / people can share base modules)
+    - [.] full paths
+    - [ ] relative paths from the repo
   - [ ] allow disabling modules
     - maybe a disable command
     - maybe save the list of active modules somewhere and check for missing modules in config and update accordingly
 - [ ] allow restoring the system to a dumped (~/configma/dumps) configuration (fzf choice?)
 - [ ] fzf interface for choosing profiles
 - [.] move stub file outside directories
+  - [ ] undo this but stub files should be hidden
 - [ ] keep logs of everything done by configma
 - [ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
 - [ ] Git integration

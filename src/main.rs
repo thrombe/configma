@@ -29,7 +29,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Add paths to module
+    /// Add entry to module
     Add {
         #[clap(required = true)]
         src: Vec<String>,
@@ -38,13 +38,27 @@ pub enum Command {
         module: Option<String>,
     },
 
-    /// Remove paths from module
+    // - [Support for using ArgGroup as Enum with derive](https://github.com/clap-rs/clap/issues/2621#issuecomment-1074671496)
+    /// Remove entry from module
+    #[clap(group = clap::ArgGroup::new("module-method").multiple(false).required(true))]
     Remove {
         #[clap(required = true)]
         src: Vec<String>,
 
-        #[clap(long, short)]
+        // specify module to remove the entry from
+        #[clap(long, short, group = "module-method")]
         module: Option<String>,
+
+        // remove entry from the active module with highest precedence
+        #[clap(long, short, group = "module-method")]
+        active: bool,
+
+        // remove entry from default module
+        #[clap(long, short, group = "module-method")]
+        default: bool,
+        // TODO: choose module with fzf
+        // #[clap(long, short, group = "module-method", default_value_t = true)]
+        // choose: bool,
     },
 
     /// Create a new profile
@@ -122,7 +136,7 @@ fn main() -> Result<()> {
     let active = fs::read_to_string(&ctx.profile_file)?;
     let active_conf = toml::from_str::<ProfileDesc>(&active)?;
 
-    let profile = match &cli.command {
+    let mut profile = match &cli.command {
         Command::SwitchProfile { name, .. } => {
             let Some(required) = ctx.conf.profiles.iter().find(|p| p.name.as_str() == name) else {
                 return Err(anyhow!(
@@ -173,32 +187,34 @@ fn main() -> Result<()> {
             profile.validate()?;
             profile.sync(force, &ctx)?;
         }
-        Command::Remove { src, module: name } => {
-            // TODO: validate
-            let name = name
-                .as_ref()
-                .or(ctx.conf.default_module.as_ref())
-                .context("no module specified. set default_module in configs or use -m flag")?;
-            let module = match profile.modules.get(name) {
-                Some(m) => m,
-                None => return Err(anyhow!("module {} is not active", name)),
-            };
+        Command::Remove {
+            src,
+            module,
+            active,
+            default: def,
+        } => {
             for src in src.iter() {
-                module.remove(src, &ctx)?;
+                if let Some(name) = module.as_ref() {
+                    profile.remove(src, &ctx, name)?;
+                } else if def {
+                    let name = ctx.conf.default_module.as_ref().context(
+                        "no module specified. set default_module in configs or use -m flag",
+                    )?;
+                    profile.remove(src, &ctx, name)?;
+                } else if active {
+                    profile.remove_from_active(src, &ctx)?;
+                } else {
+                    unreachable!()
+                };
             }
         }
         Command::Add { src, module: name } => {
-            // TODO: validate
             let name = name
                 .as_ref()
                 .or(ctx.conf.default_module.as_ref())
                 .context("no module specified. set default_module in configs or use -m flag")?;
-            let module = match profile.modules.get(name) {
-                Some(m) => m,
-                None => return Err(anyhow!("module {} is not active", name)),
-            };
             for src in src.iter() {
-                module.add(src, &ctx)?;
+                profile.add(src, &ctx, name)?;
             }
         }
     }
