@@ -55,6 +55,25 @@ impl Profile {
             }
         }
 
+        for (name, present) in active
+            .modules
+            .iter()
+            .map(|name| (name, modules.contains_key(name)))
+        {
+            if !present {
+                return Err(anyhow!("active module '{}' not found", name));
+            }
+        }
+        for (name, present) in required
+            .modules
+            .iter()
+            .map(|name| (name, modules.contains_key(name)))
+        {
+            if !present {
+                return Err(anyhow!("required module '{}' not found", name));
+            }
+        }
+
         let s = Self {
             modules,
             active_conf: active,
