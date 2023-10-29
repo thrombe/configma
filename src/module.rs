@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Ctx,
-    entry::{generate_entry_set, Convenience, Entry, RelativePath, HOME, STUB},
+    entry::{generate_entry_set, Convenience, Entry, RelativePath, HOME},
 };
 
 #[derive(Deserialize, Serialize, Debug)]
