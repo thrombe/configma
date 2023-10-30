@@ -33,6 +33,10 @@ impl Module {
         }
         let module_dir = repo.join(&name);
 
+        if !module_dir.exists() {
+            return Err(anyhow!("path does not exist: {:?}", module_dir));
+        }
+
         let home = module_dir.join(HOME);
         if !home.exists() {
             fs::create_dir(&home)?;
