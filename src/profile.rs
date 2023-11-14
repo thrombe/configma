@@ -160,38 +160,12 @@ impl Profile {
             ));
         }
 
-        let dump_to = ctx.dump_dir.join(e.relative.clone().relative());
-
         println!(
             "moving contents to dump\n  src: {:?}\n  dump: {:?}",
-            &e.src, &dump_to
+            &e.src, &ctx.dump_dir
         );
 
-        fs::create_dir_all(dump_to.parent().unwrap())?;
-
-        if e.src.is_file() || e.src.is_symlink() {
-            if e.src.is_symlink() {
-                let to = fs::read_link(&e.src)?;
-                std::os::unix::fs::symlink(to, &dump_to)?;
-            } else {
-                let _ = fs::copy(&e.src, &dump_to)?;
-            }
-            e.rm_src_file(ctx)?;
-        } else if e.src.is_dir() {
-            fs_extra::dir::copy(
-                &e.src,
-                &dump_to,
-                &fs_extra::dir::CopyOptions::new()
-                    .copy_inside(false)
-                    .content_only(true),
-            )?;
-            e.rm_src_dir_all(ctx)?;
-        } else {
-            return Err(anyhow!(
-                "cannot handle this type of file or whatever: {:?}",
-                &e.src
-            ));
-        }
+        e.dump(ctx)?;
         println!();
 
         e.symlink_to_src(ctx)?;
@@ -307,31 +281,7 @@ impl Profile {
 
         println!("moving path\n  src: {:?}\n  dst: {:?}\n", &e.src, &e.dest);
 
-        fs::create_dir_all(e.dest.parent().unwrap())?;
-
-        if e.src.is_file() {
-            // the files should have read permissions without root
-            fs::copy(&e.src, &e.dest)?;
-            e.rm_src_file(ctx)?;
-        } else if e.src.is_dir() {
-            // the files should have read permissions without root
-            fs_extra::dir::copy(
-                &e.src,
-                &e.dest,
-                &fs_extra::dir::CopyOptions::new()
-                    .copy_inside(false)
-                    .content_only(true),
-            )?;
-            e.rm_src_dir_all(ctx)?;
-            let _ = fs::File::create(e.dest.join(STUB))?;
-        } else {
-            return Err(anyhow!(
-                "cannot handle this type of file or whatever: {}",
-                &src
-            ));
-        }
-
-        e.symlink_to_src(ctx)?;
+        e.add(src, ctx)?;
 
         let dest_module = self.modules.get_mut(dest).expect("checked above");
         match &e.relative {
@@ -430,20 +380,7 @@ impl Profile {
         if module.contains(e) {
             println!("restoring path\n  src: {:?}\n  dst: {:?}\n", e.src, e.dest,);
 
-            e.rm_src_file(ctx)?;
-            if e.dest.is_dir() {
-                fs::remove_file(e.dest.join(STUB))?;
-                e.copy_dir_to_src(ctx)?;
-                fs::remove_dir_all(&e.dest)?;
-            } else if e.dest.is_file() {
-                e.copy_file_to_src(ctx)?;
-                fs::remove_file(&e.dest)?;
-            } else {
-                return Err(anyhow!(
-                    "cannot handle this type of file or whatever: '{:?}'",
-                    &e.src
-                ));
-            }
+            e.remove(ctx)?;
 
             // remove empty parent dirs
             let mut parent = e.relative.clone().relative();
