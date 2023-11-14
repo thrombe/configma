@@ -167,8 +167,6 @@ impl Profile {
 
         e.dump(ctx)?;
         println!();
-
-        e.symlink_to_src(ctx)?;
         Ok(())
     }
 
@@ -281,7 +279,7 @@ impl Profile {
 
         println!("moving path\n  src: {:?}\n  dst: {:?}\n", &e.src, &e.dest);
 
-        e.add(src, ctx)?;
+        e.add(ctx)?;
 
         let dest_module = self.modules.get_mut(dest).expect("checked above");
         match &e.relative {

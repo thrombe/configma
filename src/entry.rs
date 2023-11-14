@@ -1,11 +1,13 @@
 use std::{
     collections::HashSet,
     fs,
+    os::unix::{self, prelude::MetadataExt},
     path::{Path, PathBuf},
 };
 
 use anyhow::{anyhow, Context, Result};
 use nix::unistd;
+use users::User;
 
 use crate::config::Ctx;
 
@@ -89,78 +91,188 @@ impl Entry {
         let dump_to = ctx.dump_dir.join(self.relative.clone().relative());
         fs::create_dir_all(dump_to.parent().unwrap())?;
 
+        let src_meta = self.src.parent().expect("must have a parent").metadata()?;
+        let dest_meta = dump_to.parent().expect("must have a parent").metadata()?;
+        let same_dev = src_meta.dev() == dest_meta.dev();
+
+        let p = self.get_priv(ctx)?;
         if self.src.is_file() || self.src.is_symlink() {
             if self.src.is_symlink() {
                 let to = fs::read_link(&self.src)?;
-                std::os::unix::fs::symlink(to, &dump_to)?;
+                unix::fs::symlink(to, &dump_to)?;
+                fs::remove_file(&self.src)?;
+            } else if same_dev {
+                fs::rename(&self.src, &dump_to)?;
+                if p.is_some() {
+                    chown_recursive(&dump_to, ctx.non_root_user.clone())?;
+                }
             } else {
-                let _ = fs::copy(&self.src, &dump_to)?;
+                match fs::copy(&self.src, &dump_to) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        if dump_to.exists() {
+                            let _ = fs::remove_file(dump_to);
+                        }
+                        return Err(err)?;
+                    }
+                }
+                fs::remove_file(&self.src)?;
+                if p.is_some() {
+                    chown_recursive(&dump_to, ctx.non_root_user.clone())?;
+                }
             }
-            self.rm_src_file(ctx)?;
         } else if self.src.is_dir() {
-            fs_extra::dir::copy(
-                &self.src,
-                &dump_to,
-                &fs_extra::dir::CopyOptions::new()
-                    .copy_inside(false)
-                    .content_only(true),
-            )?;
-            self.rm_src_dir_all(ctx)?;
+            if same_dev {
+                fs::rename(&self.src, &dump_to)?;
+            } else {
+                match fs_extra::dir::copy(
+                    &self.src,
+                    &dump_to,
+                    &fs_extra::dir::CopyOptions::new()
+                        .copy_inside(false)
+                        .content_only(true),
+                ) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        if dump_to.exists() {
+                            let _ = fs::remove_dir_all(&dump_to);
+                        }
+                        return Err(err)?;
+                    }
+                }
+                fs::remove_dir_all(&self.src)?;
+            }
+            if p.is_some() {
+                chown_recursive(&dump_to, ctx.non_root_user.clone())?;
+            }
         } else {
             return Err(anyhow!(
                 "cannot handle this type of file or whatever: {:?}",
                 &self.src
             ));
         }
+        unix::fs::symlink(&self.dest, &self.src)?;
+
+        drop(p);
         Ok(())
     }
 
-    pub fn add(&self, src: impl AsRef<str>, ctx: &Ctx) -> Result<()> {
-        let src = src.as_ref();
-
+    pub fn add(&self, ctx: &Ctx) -> Result<()> {
         fs::create_dir_all(self.dest.parent().unwrap())?;
 
+        let src_meta = self.src.parent().expect("must have a parent").metadata()?;
+        let dest_meta = self.dest.parent().expect("must have a parent").metadata()?;
+        let same_dev = src_meta.dev() == dest_meta.dev();
+
+        let p = self.get_priv(ctx)?;
         if self.src.is_file() {
-            // the files should have read permissions without root
-            fs::copy(&self.src, &self.dest)?;
-            self.rm_src_file(ctx)?;
+            if same_dev {
+                fs::rename(&self.src, &self.dest)?;
+            } else {
+                match fs::copy(&self.src, &self.dest) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        if self.dest.exists() {
+                            let _ = fs::remove_file(&self.dest);
+                        }
+                        return Err(err)?;
+                    }
+                }
+                fs::remove_file(&self.src)?;
+            }
         } else if self.src.is_dir() {
-            // the files should have read permissions without root
-            fs_extra::dir::copy(
-                &self.src,
-                &self.dest,
-                &fs_extra::dir::CopyOptions::new()
-                    .copy_inside(false)
-                    .content_only(true),
-            )?;
-            self.rm_src_dir_all(ctx)?;
+            if same_dev {
+                fs::rename(&self.src, &self.dest)?;
+            } else {
+                match fs_extra::dir::copy(
+                    &self.src,
+                    &self.dest,
+                    &fs_extra::dir::CopyOptions::new()
+                        .copy_inside(false)
+                        .content_only(true),
+                ) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        if self.dest.exists() {
+                            let _ = fs::remove_dir_all(&self.dest);
+                        }
+                        return Err(err)?;
+                    }
+                }
+                fs::remove_dir_all(&self.src)?;
+            }
             let _ = fs::File::create(self.dest.join(STUB))?;
         } else {
             return Err(anyhow!(
-                "cannot handle this type of file or whatever: {}",
-                &src
+                "cannot handle this type of file or whatever: {:?}",
+                &self.src
             ));
         }
+        if p.is_some() {
+            chown_recursive(&self.dest, ctx.non_root_user.clone())?;
+        }
+        unix::fs::symlink(&self.dest, &self.src)?;
+        drop(p);
 
-        self.symlink_to_src(ctx)?;
         Ok(())
     }
 
     pub fn remove(&self, ctx: &Ctx) -> Result<()> {
-        self.rm_src_file(ctx)?;
+        let src_meta = self.src.parent().expect("must have a parent").metadata()?;
+        let dest_meta = self.dest.parent().expect("must have a parent").metadata()?;
+        let same_dev = src_meta.dev() == dest_meta.dev();
+
+        let p = self.get_priv(ctx)?;
+        fs::remove_file(&self.src)?;
         if self.dest.is_dir() {
             fs::remove_file(self.dest.join(STUB))?;
-            self.copy_dir_to_src(ctx)?;
-            fs::remove_dir_all(&self.dest)?;
+            if same_dev {
+                fs::rename(&self.dest, &self.src)?;
+            } else {
+                match fs_extra::dir::copy(
+                    &self.dest,
+                    &self.src,
+                    &fs_extra::dir::CopyOptions::new()
+                        .copy_inside(false)
+                        .content_only(true),
+                ) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        if self.src.exists() {
+                            let _ = fs::remove_dir_all(&self.src);
+                        }
+                        let _ = unix::fs::symlink(&self.dest, &self.src);
+                        return Err(err)?;
+                    }
+                }
+                fs::remove_dir_all(&self.dest)?;
+            }
         } else if self.dest.is_file() {
-            self.copy_file_to_src(ctx)?;
-            fs::remove_file(&self.dest)?;
+            if same_dev {
+                fs::rename(&self.dest, &self.src)?;
+            } else {
+                match fs::copy(&self.dest, &self.src) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        if self.src.exists() {
+                            let _ = fs::remove_file(&self.src);
+                        }
+                        let _ = unix::fs::symlink(&self.dest, &self.src);
+                        return Err(err)?;
+                    }
+                }
+                fs::remove_file(&self.dest)?;
+            }
         } else {
             return Err(anyhow!(
-                "cannot handle this type of file or whatever: '{:?}'",
+                "cannot handle this type of file or whatever: {:?}",
                 &self.src
             ));
         }
+        if p.is_some() {
+            chown_recursive(&self.src, ctx.root_user.clone().unwrap())?;
+        }
+        drop(p);
         Ok(())
     }
 
@@ -173,47 +285,52 @@ impl Entry {
         Ok(())
     }
 
-    pub fn rm_src_dir_all(&self, ctx: &Ctx) -> Result<()> {
-        let p = self.get_priv(ctx)?;
-
-        fs::remove_dir_all(&self.src)?;
-
-        drop(p);
-        Ok(())
-    }
-
-    pub fn copy_file_to_src(&self, ctx: &Ctx) -> Result<()> {
-        let p = self.get_priv(ctx)?;
-
-        fs::copy(&self.dest, &self.src)?;
-
-        drop(p);
-        Ok(())
-    }
-
-    pub fn copy_dir_to_src(&self, ctx: &Ctx) -> Result<()> {
-        let p = self.get_priv(ctx)?;
-
-        fs_extra::dir::copy(
-            &self.dest,
-            &self.src,
-            &fs_extra::dir::CopyOptions::new()
-                .copy_inside(false)
-                .content_only(true),
-        )?;
-
-        drop(p);
-        Ok(())
-    }
-
     pub fn symlink_to_src(&self, ctx: &Ctx) -> Result<()> {
         let p = self.get_priv(ctx)?;
 
-        std::os::unix::fs::symlink(&self.dest, &self.src)?;
+        unix::fs::symlink(&self.dest, &self.src)?;
 
         drop(p);
         Ok(())
     }
+}
+
+fn chown_recursive(path: impl AsRef<Path>, user: User) -> Result<()> {
+    let path = path.as_ref();
+    let uid = Some(unistd::Uid::from(user.uid()));
+    let gid = Some(unistd::Gid::from(user.primary_group_id()));
+    if path.is_file() {
+        nix::unistd::chown(path, uid, gid)?;
+    } else if path.is_symlink() {
+        let to = fs::read_link(path)?;
+        fs::remove_file(path)?;
+        unix::fs::symlink(to, path)?;
+    } else if path.is_dir() {
+        let mut paths = vec![path.to_path_buf()];
+        while let Some(path) = paths.pop() {
+            for e in fs::read_dir(&path)? {
+                let e = e?;
+                let ft = e.file_type()?;
+                let p = e.path();
+
+                if ft.is_file() {
+                    nix::unistd::chown(&p, uid, gid)?;
+                } else if ft.is_dir() {
+                    nix::unistd::chown(&p, uid, gid)?;
+                    paths.push(p);
+                } else if ft.is_symlink() {
+                    let to = fs::read_link(&p)?;
+                    fs::remove_file(&p)?;
+                    unix::fs::symlink(to, &p)?;
+                } else {
+                    return Err(anyhow!("can't handle this type of path: {:?}", path));
+                }
+            }
+        }
+    } else {
+        return Err(anyhow!("can't handle this type of path: {:?}", path));
+    }
+    Ok(())
 }
 
 pub fn generate_entry_set(parent_dir: impl AsRef<Path>) -> Result<HashSet<PathBuf>> {

@@ -90,10 +90,8 @@ configma sync
 - [ ] fzf interface for choosing profiles
 - [ ] Simlinks to dirs are followed when moving stuff to the repo. instead they should just be copied
   - fs_extra::dir::copy has this behavior
-- [ ] When moving stuff to and from the same mounted fs, simply rename stuff instead of copying and deleting.
+- [x] When moving stuff to and from the same mounted fs, simply rename stuff instead of copying and deleting.
 - [ ] Add a set-repo subcommand (with -f) that sets the repo path in configma/config.toml
-- [x] move stub file outside directories
-  - [x] undo this but stub files should be hidden
 - [ ] keep logs of everything done by configma
 - [ ] Template/Inheritance System: A template system that allows profiles to inherit configurations from other profiles to reduce redundancy.
 - [ ] Git integration
