@@ -91,11 +91,12 @@ impl Entry {
         let dump_to = ctx.dump_dir.join(self.relative.clone().relative());
         fs::create_dir_all(dump_to.parent().unwrap())?;
 
+        let p = self.get_priv(ctx)?;
+
         let src_meta = self.src.parent().expect("must have a parent").metadata()?;
         let dest_meta = dump_to.parent().expect("must have a parent").metadata()?;
         let same_dev = src_meta.dev() == dest_meta.dev();
 
-        let p = self.get_priv(ctx)?;
         if self.src.is_file() || self.src.is_symlink() {
             if self.src.is_symlink() {
                 let to = fs::read_link(&self.src)?;
@@ -160,11 +161,12 @@ impl Entry {
     pub fn add(&self, ctx: &Ctx) -> Result<()> {
         fs::create_dir_all(self.dest.parent().unwrap())?;
 
+        let p = self.get_priv(ctx)?;
+
         let src_meta = self.src.parent().expect("must have a parent").metadata()?;
         let dest_meta = self.dest.parent().expect("must have a parent").metadata()?;
         let same_dev = src_meta.dev() == dest_meta.dev();
 
-        let p = self.get_priv(ctx)?;
         if self.src.is_file() {
             if same_dev {
                 fs::rename(&self.src, &self.dest)?;
@@ -218,11 +220,12 @@ impl Entry {
     }
 
     pub fn remove(&self, ctx: &Ctx) -> Result<()> {
+        let p = self.get_priv(ctx)?;
+
         let src_meta = self.src.parent().expect("must have a parent").metadata()?;
         let dest_meta = self.dest.parent().expect("must have a parent").metadata()?;
         let same_dev = src_meta.dev() == dest_meta.dev();
 
-        let p = self.get_priv(ctx)?;
         fs::remove_file(&self.src)?;
         if self.dest.is_dir() {
             fs::remove_file(self.dest.join(STUB))?;
