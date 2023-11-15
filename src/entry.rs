@@ -64,8 +64,16 @@ pub struct Entry {
 
 impl Entry {
     pub fn get_priv<'a>(&self, ctx: &'a Ctx) -> Result<Option<Privilege<'a>>> {
+        if self.needs_priv()? {
+            Ok(Some(ctx.escalate_privileges()?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn needs_priv(&self) -> Result<bool> {
         match &self.relative {
-            RelativePath::Home(_) => Ok(None),
+            RelativePath::Home(_) => Ok(false),
             RelativePath::NonHome(_) => {
                 // let pri = ctx.escalate_privileges();
                 // if the parent of the file/dir is root - then escilate privileges
@@ -82,9 +90,9 @@ impl Entry {
                     .context("some ancestor of the path must exist")?
                 {
                     // Ok(Some(pri?))
-                    Ok(Some(ctx.escalate_privileges()?))
+                    Ok(true)
                 } else {
-                    Ok(None)
+                    Ok(false)
                 }
             }
         }
@@ -94,27 +102,23 @@ impl Entry {
         let dump_to = ctx.dump_dir.join(self.relative.clone().relative());
         fs::create_dir_all(dump_to.parent().unwrap())?;
 
-        let p = self.get_priv(ctx)?;
-
         let src_meta = self.src.parent().expect("must have a parent").metadata()?;
         let dest_meta = dump_to.parent().expect("must have a parent").metadata()?;
         let same_dev = src_meta.dev() == dest_meta.dev();
+        let needs_priv = self.needs_priv()?;
 
         if self.src.is_file() || self.src.is_symlink() {
             if self.src.is_symlink() {
                 let to = fs::read_link(&self.src)?;
                 unix::fs::symlink(to, &dump_to)?;
+
+                let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
                 fs::remove_file(&self.src)?;
-            } else if same_dev {
+                drop(p);
+            } else if same_dev && !needs_priv {
                 fs::rename(&self.src, &dump_to)?;
-                if p.is_some() {
-                    chown_recursive(
-                        &dump_to,
-                        ctx.non_root_user.clone(),
-                        dump_to.metadata()?.permissions(),
-                    )?;
-                }
             } else {
+                // needs read perms on src
                 match fs::copy(&self.src, &dump_to) {
                     Ok(_) => (),
                     Err(err) => {
@@ -124,19 +128,16 @@ impl Entry {
                         return Err(err)?;
                     }
                 }
+
+                let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
                 fs::remove_file(&self.src)?;
-                if p.is_some() {
-                    chown_recursive(
-                        &dump_to,
-                        ctx.non_root_user.clone(),
-                        dump_to.metadata()?.permissions(),
-                    )?;
-                }
+                drop(p);
             }
         } else if self.src.is_dir() {
-            if same_dev {
+            if same_dev && !needs_priv {
                 fs::rename(&self.src, &dump_to)?;
             } else {
+                // needs read perms on src
                 match fs_extra::dir::copy(
                     &self.src,
                     &dump_to,
@@ -152,14 +153,10 @@ impl Entry {
                         return Err(err)?;
                     }
                 }
+
+                let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
                 fs::remove_dir_all(&self.src)?;
-            }
-            if p.is_some() {
-                chown_recursive(
-                    &dump_to,
-                    ctx.non_root_user.clone(),
-                    dump_to.metadata()?.permissions(),
-                )?;
+                drop(p);
             }
         } else {
             return Err(anyhow!(
@@ -167,25 +164,27 @@ impl Entry {
                 &self.src
             ));
         }
-        unix::fs::symlink(&self.dest, &self.src)?;
 
+        let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
+        unix::fs::symlink(&self.dest, &self.src)?;
         drop(p);
+
         Ok(())
     }
 
     pub fn add(&self, ctx: &Ctx) -> Result<()> {
         fs::create_dir_all(self.dest.parent().unwrap())?;
 
-        let p = self.get_priv(ctx)?;
-
         let src_meta = self.src.parent().expect("must have a parent").metadata()?;
         let dest_meta = self.dest.parent().expect("must have a parent").metadata()?;
         let same_dev = src_meta.dev() == dest_meta.dev();
+        let needs_priv = self.needs_priv()?;
 
         if self.src.is_file() {
-            if same_dev {
+            if same_dev && !needs_priv {
                 fs::rename(&self.src, &self.dest)?;
             } else {
+                // needs read perms on src
                 match fs::copy(&self.src, &self.dest) {
                     Ok(_) => (),
                     Err(err) => {
@@ -195,12 +194,16 @@ impl Entry {
                         return Err(err)?;
                     }
                 }
+
+                let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
                 fs::remove_file(&self.src)?;
+                drop(p);
             }
         } else if self.src.is_dir() {
-            if same_dev {
+            if same_dev && !needs_priv {
                 fs::rename(&self.src, &self.dest)?;
             } else {
+                // needs read perms on src
                 match fs_extra::dir::copy(
                     &self.src,
                     &self.dest,
@@ -216,7 +219,10 @@ impl Entry {
                         return Err(err)?;
                     }
                 }
+
+                let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
                 fs::remove_dir_all(&self.src)?;
+                drop(p);
             }
             let _ = fs::File::create(self.dest.join(STUB))?;
         } else {
@@ -225,13 +231,8 @@ impl Entry {
                 &self.src
             ));
         }
-        if p.is_some() {
-            chown_recursive(
-                &self.dest,
-                ctx.non_root_user.clone(),
-                self.dest.parent().unwrap().metadata()?.permissions(),
-            )?;
-        }
+
+        let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
         unix::fs::symlink(&self.dest, &self.src)?;
         drop(p);
 
@@ -239,18 +240,20 @@ impl Entry {
     }
 
     pub fn remove(&self, ctx: &Ctx) -> Result<()> {
-        let p = self.get_priv(ctx)?;
-
         let src_meta = self.src.parent().expect("must have a parent").metadata()?;
         let dest_meta = self.dest.parent().expect("must have a parent").metadata()?;
         let same_dev = src_meta.dev() == dest_meta.dev();
+        let needs_priv = self.needs_priv()?;
 
+        let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
         fs::remove_file(&self.src)?;
+        drop(p);
         if self.dest.is_dir() {
             fs::remove_file(self.dest.join(STUB))?;
-            if same_dev {
+            if same_dev && !needs_priv {
                 fs::rename(&self.dest, &self.src)?;
             } else {
+                let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
                 match fs_extra::dir::copy(
                     &self.dest,
                     &self.src,
@@ -264,15 +267,18 @@ impl Entry {
                             let _ = fs::remove_dir_all(&self.src);
                         }
                         let _ = unix::fs::symlink(&self.dest, &self.src);
+                        drop(p);
                         return Err(err)?;
                     }
                 }
+                drop(p);
                 fs::remove_dir_all(&self.dest)?;
             }
         } else if self.dest.is_file() {
-            if same_dev {
+            if same_dev && !needs_priv {
                 fs::rename(&self.dest, &self.src)?;
             } else {
+                let p = needs_priv.then(|| ctx.escalate_privileges()).transpose()?;
                 match fs::copy(&self.dest, &self.src) {
                     Ok(_) => (),
                     Err(err) => {
@@ -280,9 +286,11 @@ impl Entry {
                             let _ = fs::remove_file(&self.src);
                         }
                         let _ = unix::fs::symlink(&self.dest, &self.src);
+                        drop(p);
                         return Err(err)?;
                     }
                 }
+                drop(p);
                 fs::remove_file(&self.dest)?;
             }
         } else {
@@ -291,14 +299,6 @@ impl Entry {
                 &self.src
             ));
         }
-        if p.is_some() {
-            chown_recursive(
-                &self.src,
-                ctx.root_user.clone().unwrap(),
-                self.src.parent().unwrap().metadata()?.permissions(),
-            )?;
-        }
-        drop(p);
         Ok(())
     }
 
@@ -319,50 +319,6 @@ impl Entry {
         drop(p);
         Ok(())
     }
-}
-
-fn chown_recursive(path: impl AsRef<Path>, user: User, perms: Permissions) -> Result<()> {
-    let path = path.as_ref();
-    let uid = Some(unistd::Uid::from(user.uid()));
-    let gid = Some(unistd::Gid::from(user.primary_group_id()));
-    if path.is_file() {
-        nix::unistd::chown(path, uid, gid)?;
-    } else if path.is_symlink() {
-        let to = fs::read_link(path)?;
-        fs::remove_file(path)?;
-        unix::fs::symlink(to, path)?;
-    } else if path.is_dir() {
-        nix::unistd::chown(path, uid, gid)?;
-        fs::set_permissions(path, perms.clone())?;
-
-        let mut paths = vec![path.to_path_buf()];
-
-        while let Some(path) = paths.pop() {
-            for e in fs::read_dir(&path)? {
-                let e = e?;
-                let ft = e.file_type()?;
-                let p = e.path();
-
-                if ft.is_file() {
-                    nix::unistd::chown(&p, uid, gid)?;
-                    fs::set_permissions(&p, perms.clone())?;
-                } else if ft.is_dir() {
-                    nix::unistd::chown(&p, uid, gid)?;
-                    fs::set_permissions(&p, perms.clone())?;
-                    paths.push(p);
-                } else if ft.is_symlink() {
-                    let to = fs::read_link(&p)?;
-                    fs::remove_file(&p)?;
-                    unix::fs::symlink(to, &p)?;
-                } else {
-                    return Err(anyhow!("can't handle this type of path: {:?}", path));
-                }
-            }
-        }
-    } else {
-        return Err(anyhow!("can't handle this type of path: {:?}", path));
-    }
-    Ok(())
 }
 
 pub fn generate_entry_set(parent_dir: impl AsRef<Path>) -> Result<HashSet<PathBuf>> {
