@@ -1,7 +1,10 @@
 use std::{
     collections::HashSet,
-    fs,
-    os::unix::{self, prelude::MetadataExt},
+    fs::{self, Permissions},
+    os::unix::{
+        self,
+        prelude::{MetadataExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
 };
 
@@ -105,7 +108,11 @@ impl Entry {
             } else if same_dev {
                 fs::rename(&self.src, &dump_to)?;
                 if p.is_some() {
-                    chown_recursive(&dump_to, ctx.non_root_user.clone())?;
+                    chown_recursive(
+                        &dump_to,
+                        ctx.non_root_user.clone(),
+                        dump_to.metadata()?.permissions(),
+                    )?;
                 }
             } else {
                 match fs::copy(&self.src, &dump_to) {
@@ -119,7 +126,11 @@ impl Entry {
                 }
                 fs::remove_file(&self.src)?;
                 if p.is_some() {
-                    chown_recursive(&dump_to, ctx.non_root_user.clone())?;
+                    chown_recursive(
+                        &dump_to,
+                        ctx.non_root_user.clone(),
+                        dump_to.metadata()?.permissions(),
+                    )?;
                 }
             }
         } else if self.src.is_dir() {
@@ -144,7 +155,11 @@ impl Entry {
                 fs::remove_dir_all(&self.src)?;
             }
             if p.is_some() {
-                chown_recursive(&dump_to, ctx.non_root_user.clone())?;
+                chown_recursive(
+                    &dump_to,
+                    ctx.non_root_user.clone(),
+                    dump_to.metadata()?.permissions(),
+                )?;
             }
         } else {
             return Err(anyhow!(
@@ -211,7 +226,11 @@ impl Entry {
             ));
         }
         if p.is_some() {
-            chown_recursive(&self.dest, ctx.non_root_user.clone())?;
+            chown_recursive(
+                &self.dest,
+                ctx.non_root_user.clone(),
+                self.dest.parent().unwrap().metadata()?.permissions(),
+            )?;
         }
         unix::fs::symlink(&self.dest, &self.src)?;
         drop(p);
@@ -273,7 +292,11 @@ impl Entry {
             ));
         }
         if p.is_some() {
-            chown_recursive(&self.src, ctx.root_user.clone().unwrap())?;
+            chown_recursive(
+                &self.src,
+                ctx.root_user.clone().unwrap(),
+                self.src.parent().unwrap().metadata()?.permissions(),
+            )?;
         }
         drop(p);
         Ok(())
@@ -298,7 +321,7 @@ impl Entry {
     }
 }
 
-fn chown_recursive(path: impl AsRef<Path>, user: User) -> Result<()> {
+fn chown_recursive(path: impl AsRef<Path>, user: User, perms: Permissions) -> Result<()> {
     let path = path.as_ref();
     let uid = Some(unistd::Uid::from(user.uid()));
     let gid = Some(unistd::Gid::from(user.primary_group_id()));
@@ -309,7 +332,11 @@ fn chown_recursive(path: impl AsRef<Path>, user: User) -> Result<()> {
         fs::remove_file(path)?;
         unix::fs::symlink(to, path)?;
     } else if path.is_dir() {
+        nix::unistd::chown(path, uid, gid)?;
+        fs::set_permissions(path, perms.clone())?;
+
         let mut paths = vec![path.to_path_buf()];
+
         while let Some(path) = paths.pop() {
             for e in fs::read_dir(&path)? {
                 let e = e?;
@@ -318,8 +345,10 @@ fn chown_recursive(path: impl AsRef<Path>, user: User) -> Result<()> {
 
                 if ft.is_file() {
                     nix::unistd::chown(&p, uid, gid)?;
+                    fs::set_permissions(&p, perms.clone())?;
                 } else if ft.is_dir() {
                     nix::unistd::chown(&p, uid, gid)?;
+                    fs::set_permissions(&p, perms.clone())?;
                     paths.push(p);
                 } else if ft.is_symlink() {
                     let to = fs::read_link(&p)?;
