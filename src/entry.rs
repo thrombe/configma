@@ -1,16 +1,12 @@
 use std::{
     collections::HashSet,
-    fs::{self, Permissions},
-    os::unix::{
-        self,
-        prelude::{MetadataExt, PermissionsExt},
-    },
+    fs,
+    os::unix::{self, prelude::MetadataExt},
     path::{Path, PathBuf},
 };
 
 use anyhow::{anyhow, Context, Result};
 use nix::unistd;
-use users::User;
 
 use crate::config::Ctx;
 
